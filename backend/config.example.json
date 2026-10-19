@@ -1,0 +1,10 @@
+{
+  "clientId": "REPLACE.apps.googleusercontent.com",
+  "sharedSheetId": "REPLACE",
+  "sharedCalId": "REPLACE",
+  "workCalId": "REPLACE",
+  "users": {
+    "first@example.com": {"privateSheetId":"REPLACE_FIRST", "privateCalId":"REPLACE_FIRST"},
+    "second@example.com": {"privateSheetId":"REPLACE_SECOND", "privateCalId":"REPLACE_SECOND"}
+  }
+}

@@ -1,0 +1,5 @@
+MyLife Calendar v2
+README_設定手順.mdから開始してください。
+ソース修正と自動テストは完了していますが、Google実連携・GitHub Pages公開・iPhone実機は未完了です。
+詳細はdocs/検証状況.mdに記載しています。
+既存の勤務シフト管理アプリにコードを追加しないでください。
