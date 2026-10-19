@@ -1,6 +1,6 @@
 # MyLife Calendar v2 — 設定手順
 
-この版はソース実装とローカル自動テストを終えた段階です。Google実アカウントでの認可・共有権限・GAS公開、GitHub Pages公開、iPhone実機検証は未完了です。実運用開始前に docs/検証状況.md の実機項目を完了してください。
+この版はGitHub Pages公開、ソース実装と自動テスト、実公開ページの体験モード操作と英数字画像OCRの確認を終えた段階です。Google実アカウントでのアプリ認可・共有権限・GAS同期、iPhone実機検証は未完了です。実運用開始前に docs/検証状況.md の実機項目を完了してください。
 
 ## 構成
 
@@ -11,6 +11,9 @@
 - service-worker.js / manifest.webmanifest：PWA。アプリ資材のみキャッシュ
 
 勤務シフト管理アプリは変更しません。無料枠を前提とし、有料APIは使用しません。Googleの利用上限は適用されます。
+
+公開ページ：https://makoto6709.github.io/mylife-calendar/
+リポジトリ：https://github.com/makoto6709/mylife-calendar
 
 ## 1. GitHub Pages
 
@@ -67,7 +70,7 @@ Google Auth Platformでアプリを設定し、対象を外部・テスト用と
 - SHIFT_SOURCE_ID：既存の「辻岡シフト」のスプレッドシートID
 - SHIFT_WORK_CALENDAR_ID：MyLife勤務カレンダーID
 
-タイムゾーンをAsia/Tokyoに設定します。元シートに対する権限は読み取りのみのOAuthスコープです。syncMyLifeShiftsを手動実行し、作成・更新数とカレンダーを確認後、installMyLifeTriggerを実行します。15分間隔のトリガーが作成されます。
+タイムゾーンをAsia/Tokyoに設定します。勤務カレンダーをまだ作成していない場合はSHIFT_SOURCE_IDだけを設定してsetupMyLifeShiftを実行すると、新しいMyLife勤務カレンダーを作成して初回同期とトリガー設定を行います。元シートに対する権限は読み取りのみのOAuthスコープです。syncMyLifeShiftsを手動実行し、作成・更新数とカレンダーを確認後、installMyLifeTriggerを実行します。15分間隔のトリガーが作成されます。
 
 読み取りは各週の日付・勤務先・開始・終了の4行だけです。備考行は取得しません。21日〜翌20日の月度を識別し、対象の勤務を日付の安定キーで更新します。H等の休日は該当する管理イベントのみ削除します。不明な勤務先・不正な勤務時刻ではGoogleの予定を書き換える前に停止します。
 

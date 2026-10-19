@@ -17,6 +17,18 @@ const SHIFT_CONFIG = Object.freeze({
   WORK_TYPES: ['水戸内原','水戸内原店','東海','東海店','下妻','下妻店','エリアMT','その他']
 });
 
+/** 初回設定。SHIFT_SOURCE_IDをプロパティに設定後に実行。 */
+function setupMyLifeShift(){
+  const p=PropertiesService.getScriptProperties();
+  if(!p.getProperty('SHIFT_SOURCE_ID'))throw Error('SHIFT_SOURCE_IDを設定してください。');
+  if(!p.getProperty('SHIFT_WORK_CALENDAR_ID')){
+    const c=CalendarApp.createCalendar('MyLife勤務',{timeZone:'Asia/Tokyo',summary:'勤務シフト表からの読み取り専用連携'});
+    p.setProperty('SHIFT_WORK_CALENDAR_ID',c.getId());
+  }
+  installMyLifeTrigger();
+  Logger.log('MyLife勤務 calendar ID: '+p.getProperty('SHIFT_WORK_CALENDAR_ID'));
+}
+
 /** 手動実行 / 時間主導トリガー共通。 */
 function syncMyLifeShifts(){
   const props=PropertiesService.getScriptProperties();const sourceId=props.getProperty('SHIFT_SOURCE_ID'),calendarId=props.getProperty('SHIFT_WORK_CALENDAR_ID');if(!sourceId||!calendarId)throw Error('SHIFT_SOURCE_IDとSHIFT_WORK_CALENDAR_IDをスクリプトプロパティに設定してください。');
