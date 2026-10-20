@@ -20,10 +20,30 @@ function authenticate_(token,c){
  const u=call_(token,'https://www.googleapis.com/oauth2/v3/userinfo');
  if(!u.email_verified||!c.users[u.email])throw Error('許可された2人のアカウントで接続してください。');return u.email;
 }
+/** Provision only the authenticated member's private stores. No ACL grants. */
+function provisionPrivate_(token,email){
+ const lock=LockService.getScriptLock();if(!lock.tryLock(25000))throw Error('初回設定が混み合っています。再試行してください。');
+ try{
+  const c=cfg_(),own=c.users[email];if(!own)throw Error('登録されていないアカウントです。');
+  const persist=()=>PropertiesService.getScriptProperties().setProperty('MYLIFE_CONFIG',JSON.stringify(c));
+  if(!own.privateSheetId){
+   const doc=call_(token,'https://sheets.googleapis.com/v4/spreadsheets','post',{properties:{title:'MyLife_個人予定_DB',locale:'ja_JP',timeZone:'Asia/Tokyo'},sheets:[{properties:{title:'events',gridProperties:{frozenRowCount:1}}}]});
+   own.privateSheetId=doc.spreadsheetId;own.provisioningHeader=true;persist();
+  }
+  if(own.provisioningHeader){
+   const before=call_(token,root_(own.privateSheetId)+'/values/events!A1:T1');
+   if((before.values||[]).length&&JSON.stringify(before.values[0])!==JSON.stringify(H))throw Error('個人DBのヘッダーが変更されています。');
+   if(!(before.values||[]).length)call_(token,root_(own.privateSheetId)+'/values/events!A1:T1?valueInputOption=RAW','put',{values:[H]});
+   delete own.provisioningHeader;persist();
+  }
+  if(!own.privateCalId){const cal=call_(token,'https://www.googleapis.com/calendar/v3/calendars','post',{summary:'MyLife 個人',timeZone:'Asia/Tokyo',description:'本人専用。相手への共有は行いません。'});own.privateCalId=cal.id;persist();}
+  return c;
+ }finally{lock.releaseLock();}
+}
 function permissions_(token,id){const a=call_(token,'https://www.googleapis.com/drive/v3/files/'+encodeURIComponent(id)+'/permissions?fields=permissions(type,role,emailAddress,deleted),nextPageToken&pageSize=100');if(a.nextPageToken)throw Error('権限数が多すぎます。');return a.permissions||[];}
 function policy_(token,c,email){
- const own=c.users[email];const ids=Object.values(c.users).map(x=>x.privateSheetId);
- if(!own.privateSheetId||!own.privateCalId||!c.sharedCalId||ids.includes(c.sharedSheetId)||new Set(ids).size!==2||Object.values(c.users).some(x=>x.privateCalId===c.sharedCalId)||new Set(Object.values(c.users).map(x=>x.privateCalId)).size!==2)throw Error('共有・個人の保存先を別々に設定してください。');
+ const own=c.users[email];const ids=Object.values(c.users).map(x=>x.privateSheetId).filter(Boolean);
+ if(!own.privateSheetId||!own.privateCalId||!c.sharedCalId||ids.includes(c.sharedSheetId)||new Set(ids).size!==ids.length||Object.values(c.users).some(x=>x.privateCalId===c.sharedCalId)||new Set(Object.values(c.users).map(x=>x.privateCalId).filter(Boolean)).size!==Object.values(c.users).filter(x=>x.privateCalId).length)throw Error('共有・個人の保存先を別々に設定してください。');
  const privatePermissions=permissions_(token,own.privateSheetId);
  if(privatePermissions.length!==1||privatePermissions[0].type!=='user'||privatePermissions[0].emailAddress!==email||privatePermissions[0].role!=='owner')throw Error('個人シートは本人のみが所有する非共有ファイルにしてください。');
  const shared=permissions_(token,c.sharedSheetId);
@@ -68,7 +88,7 @@ function doPost(e){
  let lock;
  try{
   if(!e.postData||e.postData.contents.length>20000)throw Error('リクエストが不正です。');
-  const b=JSON.parse(e.postData.contents),c=cfg_(),email=authenticate_(b.token,c),p=policy_(b.token,c,email);
+  const b=JSON.parse(e.postData.contents);let c=cfg_();const email=authenticate_(b.token,c);if(b.action==='bootstrap')c=provisionPrivate_(b.token,email);const p=policy_(b.token,c,email);
   if(b.action==='bootstrap')return json_({ok:true,config:p,email,version:2});
   if(!['save','delete','reconcile','resolve'].includes(b.action)||!['shared','private'].includes(b.scope))throw Error('操作が不正です。');
   const id=b.scope==='shared'?p.sharedSheetId:p.privateSheetId;

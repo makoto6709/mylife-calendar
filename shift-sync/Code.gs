@@ -99,11 +99,11 @@ function syncMyLifeShifts(){
   }finally{lock.releaseLock();}
 }
 
-/** 最初に1度手動実行して、15分ごとの時間トリガーを設定。 */
+/** 最初に1度手動実行して、毎朝9時ごろの時間トリガーを設定。 */
 function installMyLifeTrigger(){
   ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='syncMyLifeShifts').forEach(t=>ScriptApp.deleteTrigger(t));
   syncMyLifeShifts();
-  ScriptApp.newTrigger('syncMyLifeShifts').timeBased().everyMinutes(15).create();
+  ScriptApp.newTrigger('syncMyLifeShifts').timeBased().atHour(9).nearMinute(0).everyDays(1).inTimezone('Asia/Tokyo').create();
 }
 
 function asDateTime_(year,month,day,input){

@@ -6,9 +6,9 @@ const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1'}
 const HEADERS=['id','owner','scope','title','start','end','allDay','notes','sync','calendarId','googleEventId','source','deleted','createdAt','updatedAt','location','revision','syncState','googleEtag','lastError'];
 const SCOPE='openid email https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.metadata.readonly';
 const TZ='Asia/Tokyo';
-const defaults={gatewayUrl:'',clientId:'',sharedSheetId:'',privateSheetId:'',sharedCalId:'',privateCalId:'',workCalId:'',visibleCalendarIds:[],visibleTouched:false};
+const defaults={gatewayUrl:window.MYLIFE_DEPLOYMENT?.gatewayUrl||'',clientId:window.MYLIFE_DEPLOYMENT?.clientId||'',sharedSheetId:'',privateSheetId:'',sharedCalId:'',privateCalId:'',workCalId:'',visibleCalendarIds:[],visibleTouched:false};
 const parseJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))||fallback;}catch{return fallback;}};
-let config={...defaults,...parseJson(KEYS.config,{})};
+let config={...defaults,...parseJson(KEYS.config,{})};for(const k of ['clientId','gatewayUrl'])if(window.MYLIFE_DEPLOYMENT?.[k])config[k]=window.MYLIFE_DEPLOYMENT[k];
 const {dateKey,keyAdd,makeLocalISO,timeLocal,workTravel,alarmTimes,parseEventText}=MyLifeCore;
 const today=new Date(dateKey()+'T12:00:00+09:00');const state={month:new Date(today.getFullYear(),today.getMonth(),1),selected:dateKey(today),filter:'all',token:'',email:'',mode:'demo',records:[],external:[],visible:[],allCalendars:[],fetchedCalIds:new Set(),busy:false,editing:null,image:null,view:'day',expiresAt:0,ocrBusy:false};
 const safe=str=>String(str??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
@@ -73,7 +73,7 @@ function mergeEvents(){
  for(const e of state.external)if(!used.has(`${e.calendarId}::${e.googleEventId}`))out.push(e);return out;
 }
 async function refresh(){if(state.busy)return;setBusy(true);try{if(state.mode==='cloud')await loadCloud();else loadDemo();return true;}catch(e){showMsg(`同期できません：${e.message}`,true);return false;}finally{setBusy(false);}}
-async function connect(){saveConfig();if(!config.clientId||!config.clientId.endsWith('.apps.googleusercontent.com')){showMsg('Google OAuth クライアントIDを入力してください。',true);return;}if(!window.google?.accounts?.oauth2){showMsg('Google認証ライブラリを読み込めません。ネット接続を確認してください。',true);return;}
+async function connect(){saveConfig();if(!config.clientId||!config.clientId.endsWith('.apps.googleusercontent.com')){showMsg('Google接続の初期設定が準備中です。今は体験モードを利用できます。',true);openSettings();return;}if(!window.google?.accounts?.oauth2){showMsg('Google認証ライブラリを読み込めません。ネット接続を確認してください。',true);return;}
  const client=google.accounts.oauth2.initTokenClient({client_id:config.clientId,scope:SCOPE,error_callback:error=>showMsg('認証画面を開けませんでした。Safariから開いて接続をお試しください。',true),callback:async response=>{if(response.error||!response.access_token){showMsg('Google認証に失敗しました。',true);return;}state.token=response.access_token;state.expiresAt=Date.now()+(+response.expires_in||3600)*1000;state.mode='cloud';state.records=[];state.external=[];state.visible=[];render();try{const info=await api('https://www.googleapis.com/oauth2/v3/userinfo');state.email=info.email||'';$('connectionPill').textContent='Google接続中';syncInputs();await loadCalendarList();if(await refresh())showMsg('Googleへ接続しました。');}catch(e){showMsg(`接続後の読み込みに失敗：${e.message}`,true);}}});client.requestAccessToken({prompt:'select_account'});
 }
 function eventsForDay(day){return state.visible.filter(e=>{if(state.filter!=='all'&&e.kind!==state.filter)return false;let start,end;if(e.allDay){start=e.start.slice(0,10);end=e.end.slice(0,10);return day>=start&&day<end;}start=new Date(e.start);end=new Date(e.end);if(!Number.isFinite(+start)||!Number.isFinite(+end))return false;const a=new Date(`${day}T00:00:00+09:00`),b=new Date(`${keyAdd(day,1)}T00:00:00+09:00`);return start<b&&end>a;}).sort((a,b)=>a.start.localeCompare(b.start));}
@@ -133,8 +133,13 @@ async function recognizeImage(){if(!state.image||state.ocrBusy)return;state.ocrB
  }catch(e){$('ocrState').textContent='OCRに失敗しました。画像の文字は下欄に手入力して続行できます。詳細：'+e.message;}finally{state.ocrBusy=false;$('retryOcr').disabled=false;}}
 function useOcr(){const content=$('recognizedText').value.trim();if(!content){showMsg('読み取った文章を入力してください。',true);return;}const extracted=parseEventText(content);$('imageDialog').close();openEvent();$('eventTitle').value=extracted.title;if(extracted.date&&Number.isFinite(+new Date(extracted.date+'T12:00:00'))){$('startDate').value=extracted.date;$('endDate').value=extracted.date;}if(extracted.start)$('startTime').value=extracted.start;if(extracted.end)$('endTime').value=extracted.end;else if(extracted.start){const [h,m]=extracted.start.split(':').map(Number);const n=h*60+m+60;$('endTime').value=`${pad(Math.floor(n/60)%24)}:${pad(n%60)}`;if(n>=1440)$('endDate').value=keyAdd($('startDate').value,1);}$('eventNotes').value=extracted.notes;showMsg('認識した候補を入力しました。日時と内容を必ず確認してください。');}
 function handleImage(file){if(!file)return;if(state.ocrBusy){showMsg('解析が完了してから次の画像を選択してください。');return;}if(file.size>20*1024*1024){showMsg('画像は20MB以下にしてください。',true);return;}if(!file.type.startsWith('image/')){showMsg('画像ファイルを選択してください。',true);return;}state.image=file;const object=URL.createObjectURL(file);$('imagePreview').src=object;$('imagePreview').onload=()=>URL.revokeObjectURL(object);$('recognizedText').value='';$('ocrState').textContent='文字認識を開始します。';showDialog($('imageDialog'));recognizeImage();}
+async function shareApp(){
+ const url=new URL(location.pathname,location.origin).href;
+ try{if(navigator.share)await navigator.share({title:'MyLife Calendar',text:'ふたりのカレンダー。Googleで接続して利用を開始できます。',url});else if(navigator.clipboard){await navigator.clipboard.writeText(url);showMsg('共有リンクをコピーしました。相手に送ってください。');}else showMsg('アドレス欄のURLをコピーして共有してください。');}catch(err){if(err.name!=='AbortError')showMsg('共有できませんでした。アドレス欄のURLをコピーしてください。',true);}
+}
 async function resolveSync(){const e=state.editing;if(!e||!e.lastError||state.busy)return;if(!confirm('MyLife側の未同期の変更を取り消し、現在のGoogle側の内容を採用します。Google側が削除済みならMyLifeの内容を同期OFFで保持します。よろしいですか？'))return;setBusy(true);try{await gateway('resolve',e.scope,e,e.revision);$('eventDialog').close();setBusy(false);await refresh();}catch(err){showMsg(err.message,true);}finally{setBusy(false);}}
 function bind(){
+ $('quickLogin').addEventListener('click',connect);$('shareApp').addEventListener('click',shareApp);
  $('resolveSync').addEventListener('click',resolveSync);
  $('viewDay').addEventListener('click',()=>{state.view='day';render();});$('viewWeek').addEventListener('click',()=>{state.view='week';render();});
  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.mode==='cloud'&&!state.busy)refresh();});
@@ -150,5 +155,5 @@ function bind(){
  $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);$('eventScope').addEventListener('change',scopeToggle);
  $('imageFile').addEventListener('change',e=>{handleImage(e.target.files[0]);e.target.value='';});$('closeImage').addEventListener('click',()=>$('imageDialog').close());$('retryOcr').addEventListener('click',recognizeImage);$('useOcr').addEventListener('click',useOcr);
 }
-bind();syncInputs();loadDemo();if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+bind();syncInputs();loadDemo();if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();
