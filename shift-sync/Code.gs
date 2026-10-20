@@ -101,8 +101,8 @@ function syncMyLifeShifts(){
 
 /** 最初に1度手動実行して、毎朝9時ごろの時間トリガーを設定。 */
 function installMyLifeTrigger(){
-  ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='syncMyLifeShifts').forEach(t=>ScriptApp.deleteTrigger(t));
   syncMyLifeShifts();
+  ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='syncMyLifeShifts').forEach(t=>ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('syncMyLifeShifts').timeBased().atHour(9).nearMinute(0).everyDays(1).inTimezone('Asia/Tokyo').create();
 }
 
