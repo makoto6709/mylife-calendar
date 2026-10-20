@@ -35,7 +35,7 @@ function syncMyLifeShifts(){
   const lock=LockService.getScriptLock();
   if(!lock.tryLock(30000))return;
   try{
-    const source=SpreadsheetApp.openById(sourceId);
+    const source=readShiftSource_(sourceId);
     const calendar=CalendarApp.getCalendarById(calendarId);
     if(!calendar)throw new Error('勤務カレンダーがありません。IDと権限を確認してください。');
     const days=new Map();
@@ -112,4 +112,27 @@ function asDateTime_(year,month,day,input){
   const h=+match[1],m=+match[2];if(h>23)return null;
   // スクリプトのプロジェクトタイムゾーンを「Asia/Tokyo」に必ず設定すること。
   return new Date(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00+09:00`);
+}
+
+/** Sheets REST GET only. Never fetches the fifth (notes) row. */
+function readShiftSource_(id){
+  const base='https://sheets.googleapis.com/v4/spreadsheets/'+encodeURIComponent(id);
+  function get(path){
+    const response=UrlFetchApp.fetch(base+path,{method:'get',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true,followRedirects:false});
+    if(response.getResponseCode()!==200)throw Error('勤務元の読み取りに失敗しました（HTTP '+response.getResponseCode()+'）。カレンダーは変更していません。');
+    return JSON.parse(response.getContentText());
+  }
+  const meta=get('?fields=sheets(properties(title,gridProperties(rowCount)))');
+  return {getSheets:()=> (meta.sheets||[]).map(s=>({
+    getName:()=>s.properties.title,
+    getLastRow:()=>s.properties.gridProperties.rowCount,
+    getRange:(row,col,count,width)=>{
+      if(col!==1||count!==4||width!==7||row<2||(row-2)%5!==0)throw Error('許可外の取得範囲');
+      const range="'"+s.properties.title.replace(/'/g,"''")+"'!A"+row+':G'+(row+3);
+      return {getDisplayValues:()=>{
+        const values=get('/values/'+encodeURIComponent(range)+'?valueRenderOption=FORMATTED_VALUE').values||[];
+        return Array.from({length:4},(_,r)=>Array.from({length:7},(_,c)=>String((values[r]||[])[c]||'')));
+      }};
+    }
+  }))};
 }
