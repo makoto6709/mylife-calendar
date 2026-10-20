@@ -141,6 +141,7 @@ async function resolveSync(){const e=state.editing;if(!e||!e.lastError||state.bu
 function bind(){
  $('quickLogin').addEventListener('click',connect);$('shareApp').addEventListener('click',shareApp);
  $('resolveSync').addEventListener('click',resolveSync);
+ $('shiftSyncBtn').addEventListener('click',()=>showMsg('勤務シフトの手動同期は接続準備中です。まだ勤務予定は取り込まれません。',true));
  $('viewDay').addEventListener('click',()=>{state.view='day';render();});$('viewWeek').addEventListener('click',()=>{state.view='week';render();});
  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state.mode==='cloud'&&!state.busy)refresh();});
  setInterval(()=>{if(document.visibilityState==='visible'&&state.mode==='cloud'&&!state.busy&&Date.now()<state.expiresAt)refresh();},300000);
