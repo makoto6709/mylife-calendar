@@ -1,4 +1,4 @@
-# MyLife Calendar v2.2 — 完全手動同期
+# MyLife Calendar v2.3 — 完全手動同期
 
 既存のMyLife Calendarを継続するPWA。公開先：https://makoto6709.github.io/mylife-calendar/
 
@@ -16,4 +16,4 @@
 
 公開UIとソースは更新するが、Google OAuth clientId・本体gatewayUrlの初期設定は未完了。Google実接続と2アカウントの実機検証は未完了。体験モードを実同期成功として表示しない。勤務用の旧独立GASは本体gatewayとは別物で、PWAから呼ばない。
 
-構成：core.js（日付・起床計算）、sync.js（手動実行の統括）、app.js（UIとアダプター）、backend/Code.gs（認証・保存・外部同期）。手順はREADME_設定手順.md、検証はdocs/検証状況.md。
+構成：core.js（日付・起床計算）、sync.js（手動実行の統括）、app.js（UIとアダプター）、backend/Code.gs（認証・保存・外部同期）、backend/Setup.gs（初回の共有DB・共有カレンダー準備）。手順はREADME_設定手順.md、検証はdocs/検証状況.md。

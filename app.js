@@ -18,7 +18,7 @@ function monthText(d){return `${d.getFullYear()}年 ${d.getMonth()+1}月`;}
 function inLocal(iso){if(!iso)return '';return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso:dateKey(iso);}
 function showMsg(msg,error=false){const el=$('message');el.textContent=msg;el.classList.toggle('error',error);el.classList.remove('hidden');clearTimeout(showMsg.t);showMsg.t=setTimeout(()=>el.classList.add('hidden'),7000);}
 function saveConfig(){for(const k of Object.keys(defaults)){if($(k))config[k]=$(k).value.trim();}localStorage.setItem(KEYS.config,JSON.stringify(config));}
-function syncInputs(){for(const k of Object.keys(defaults)){if($(k))$(k).value=config[k]||'';} $('loggedEmail').textContent=isGoogleConnected()?`接続済み：${state.email}`:'未接続';$('loginBtn').classList.toggle('hidden',isGoogleConnected());$('disconnectGoogle').classList.toggle('hidden',!isGoogleConnected());}
+function syncInputs(){for(const k of Object.keys(defaults)){if($(k))$(k).value=config[k]||'';} const signedIn=isSignedIn();$('loggedEmail').textContent=signedIn?`ログイン中：${state.email}（MyLifeの予定保存・勤務取得に使用）`:'未ログイン';$('calendarLink').textContent=config.googleCalendarEnabled===false?'Googleカレンダー連携：OFF（「すべて同期」は勤務だけ取得します）':'Googleカレンダー連携：ON';$('loginBtn').classList.toggle('hidden',signedIn);$('disconnectGoogle').classList.toggle('hidden',config.googleCalendarEnabled===false);$('enableGoogle').classList.toggle('hidden',config.googleCalendarEnabled!==false);}
 function setBusy(b){state.busy=b;$('saveEvent').disabled=b;$('deleteEvent').disabled=b;for(const id of ['syncAllBtn','settingsSyncAll'])$(id).disabled=b||!!syncRunner?.busy;}
 function ensureCloud(){if(state.mode!=='cloud'||!state.token||Date.now()>=state.expiresAt)throw Error('Googleで接続してください。');}
 async function api(url,init={}){
@@ -37,7 +37,7 @@ async function gateway(action,scope,record,expectedRevision=0){
  const res=await fetch(config.gatewayUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:state.token,protocol:3,action,scope,record,expectedRevision}),redirect:'follow',signal:AbortSignal.timeout(90000)});
  if(!res.ok)throw Error('同期サーバーに接続できません。');const data=await res.json();if(!data.ok)throw Error(data.error||'同期サーバーでエラーが発生しました。');return data;
 }
-async function reconcileScope(scope){let afterId='';do{const r=await gateway('reconcile',scope,{afterId});if(r.failed)throw Error('未同期または競合の予定があります。');afterId=r.nextAfter||'';}while(afterId);}
+async function reconcileScope(scope){let afterId='',failed=0;do{const r=await gateway('reconcile',scope,{afterId});failed+=r.failed||0;afterId=r.nextAfter||'';}while(afterId);if(failed)throw Error(`未同期または競合の予定が${failed}件あります。`);}
 async function bootstrap(){const data=await gateway('bootstrap');if(data.protocol!==3)throw Error('同期サーバーの更新が必要です。既存データは変更していません。');state.protocol=3;Object.assign(config,data.config);state.email=data.email;syncInputs();}
 function toGoogleEvent(r){const o={summary:r.title,location:r.location||'',description:r.notes||'',start:r.allDay?{date:r.start}:{dateTime:r.start,timeZone:TZ},end:r.allDay?{date:r.end}:{dateTime:r.end,timeZone:TZ},extendedProperties:{shared:{mylifeId:r.id}}};return o;}
 const gcalUrl=(cal,event='')=>`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal)}/events${event?'/'+encodeURIComponent(event):''}`;
@@ -53,7 +53,9 @@ async function syncGoogleCalendars(){
  ensureCloud();await loadCalendarList();
  const scopes=await Promise.allSettled(['shared','private'].map(reconcileScope));
  const from=new Date(state.month.getFullYear(),state.month.getMonth()-1,1),to=new Date(state.month.getFullYear(),state.month.getMonth()+2,1);
- const calendars=state.allCalendars.filter(c=>checkedCalendarIds().has(c.id));
+ const listed=state.allCalendars.filter(c=>checkedCalendarIds().has(c.id));
+ // A calendar shared via ACL is not always in the partner's calendarList; still read it.
+ const calendars=[...listed,...[config.sharedCalId,config.privateCalId].filter(id=>id&&!listed.some(c=>c.id===id)).map(id=>({id,accessRole:'writer',summary:id===config.sharedCalId?'MyLife 共有':'MyLife 個人'}))];
  const received=await Promise.allSettled(calendars.map(c=>fetchCalendarEvents(c,from,to)));
  const retained=state.external.filter(e=>!calendars.some((c,i)=>c.id===e.calendarId&&received[i].status==='fulfilled'));
  state.external=[...retained,...received.filter(r=>r.status==='fulfilled').flatMap(r=>r.value)];
@@ -73,7 +75,7 @@ function mergeEvents(){
 }
 async function refresh(){if(state.busy)return;setBusy(true);try{if(state.mode==='cloud')await loadCloud();else loadDemo();return true;}catch(e){showMsg(`予定を読み込めません：${e.message}`,true);return false;}finally{setBusy(false);}}
 async function connect(){saveConfig();if(!config.clientId||!config.clientId.endsWith('.apps.googleusercontent.com')){showMsg('Google接続の初期設定が準備中です。今は体験モードを利用できます。',true);openSettings();return;}if(!window.google?.accounts?.oauth2){showMsg('Google認証ライブラリを読み込めません。ネット接続を確認してください。',true);return;}
- const client=google.accounts.oauth2.initTokenClient({client_id:config.clientId,scope:SCOPE,error_callback:error=>showMsg('認証画面を開けませんでした。Safariから開いて接続をお試しください。',true),callback:async response=>{if(response.error||!response.access_token){showMsg('Google認証に失敗しました。',true);return;}state.token=response.access_token;state.expiresAt=Date.now()+(+response.expires_in||3600)*1000;state.mode='cloud';state.protocol=0;state.email='';state.records=[];state.external=[];state.visible=[];config.googleCalendarEnabled=true;localStorage.setItem(KEYS.config,JSON.stringify(config));render();try{const info=await api('https://www.googleapis.com/oauth2/v3/userinfo');state.email=info.email||'';$('connectionPill').textContent='Google接続中';await bootstrap();syncInputs();if(await refresh())showMsg('接続しました。「すべて同期」で外部予定を反映できます。');}catch(e){showMsg(`接続後の読み込みに失敗：${e.message}`,true);}}});client.requestAccessToken({prompt:'select_account'});
+ const client=google.accounts.oauth2.initTokenClient({client_id:config.clientId,scope:SCOPE,error_callback:error=>showMsg('認証画面を開けませんでした。Safariから開いて接続をお試しください。',true),callback:async response=>{if(response.error||!response.access_token){showMsg('Google認証に失敗しました。',true);return;}state.token=response.access_token;state.expiresAt=Date.now()+(+response.expires_in||3600)*1000;state.mode='cloud';state.protocol=0;state.email='';state.records=[];state.external=[];state.visible=[];render();try{const info=await api('https://www.googleapis.com/oauth2/v3/userinfo');state.email=info.email||'';$('connectionPill').textContent='Google接続中';await bootstrap();syncInputs();if(await refresh())showMsg('接続しました。「すべて同期」で外部予定を反映できます。');}catch(e){showMsg(`接続後の読み込みに失敗：${e.message}`,true);}}});client.requestAccessToken({prompt:'select_account'});
 }
 function eventsForDay(day){return state.visible.filter(e=>{if(state.filter!=='all'&&e.kind!==state.filter)return false;let start,end;if(e.allDay){start=e.start.slice(0,10);end=e.end.slice(0,10);return day>=start&&day<end;}start=new Date(e.start);end=new Date(e.end);if(!Number.isFinite(+start)||!Number.isFinite(+end))return false;const a=new Date(`${day}T00:00:00+09:00`),b=new Date(`${keyAdd(day,1)}T00:00:00+09:00`);return start<b&&end>a;}).sort((a,b)=>a.start.localeCompare(b.start));}
 function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLocal(e.end)}`;}
@@ -131,8 +133,10 @@ async function shareApp(){
  try{if(navigator.share)await navigator.share({title:'MyLife Calendar',text:'ふたりのカレンダー。Googleで接続して利用を開始できます。',url});else if(navigator.clipboard){await navigator.clipboard.writeText(url);showMsg('共有リンクをコピーしました。相手に送ってください。');}else showMsg('アドレス欄のURLをコピーして共有してください。');}catch(err){if(err.name!=='AbortError')showMsg('共有できませんでした。アドレス欄のURLをコピーしてください。',true);}
 }
 async function resolveSync(){const e=state.editing;if(!e||!e.lastError||state.busy)return;if(!confirm('MyLife側の未同期の変更を取り消し、現在のGoogle側の内容を採用します。Google側が削除済みならMyLifeの内容を同期OFFで保持します。よろしいですか？'))return;setBusy(true);try{await gateway('queueResolve',e.scope,e,e.revision);$('eventDialog').close();setBusy(false);await refresh();}catch(err){showMsg(err.message,true);}finally{setBusy(false);}}
-function isGoogleConnected(){return state.mode==='cloud'&&!!state.token&&Date.now()<state.expiresAt&&config.googleCalendarEnabled!==false;}
+function isSignedIn(){return state.mode==='cloud'&&!!state.token&&Date.now()<state.expiresAt;}
+function isGoogleConnected(){return isSignedIn()&&config.googleCalendarEnabled!==false;}
 function disconnectGoogle(){config.googleCalendarEnabled=false;localStorage.setItem(KEYS.config,JSON.stringify(config));state.external=[];state.visible=mergeEvents();render();syncInputs();showMsg('Googleカレンダーとの連携を解除しました。保存済み予定は保持しています。');}
+function enableGoogle(){config.googleCalendarEnabled=true;localStorage.setItem(KEYS.config,JSON.stringify(config));syncInputs();showMsg('Googleカレンダー連携をONにしました。「すべて同期」を押したときに反映します。');}
 async function stageExternal(old,draft,deleted){const scope=old.calendarId===config.sharedCalId?'shared':'private';return gateway('stageExternal',scope,{...draft,id:crypto.randomUUID(),scope,calendarId:old.calendarId,googleEventId:old.googleEventId,googleEtag:old.googleEtag,deleted},0);}
 
 function renderSyncReport(){const report=parseJson(KEYS.syncReport,{});if(!report.at){$('lastSync').textContent='最終同期：未実行';return;}$('lastSync').textContent='最終同期：'+new Intl.DateTimeFormat('ja-JP',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(report.at));$('syncSummary').textContent=report.summary||'';}
@@ -141,12 +145,12 @@ const syncRunner=MyLifeSync.createRunner({
  shift:async()=>{ensureCloud();return gateway('syncShift','shared');},
  google:syncGoogleCalendars,
  onBusy:b=>{for(const id of ['syncAllBtn','settingsSyncAll']){$(id).disabled=b||state.busy;$(id).textContent=b?'同期中…':'↻ すべて同期';}},
- onResult:report=>{const label={success:'成功',failed:'失敗',skipped:'未接続'};const summary=(report.status==='success'?'同期完了':report.status==='partial'?'一部失敗':'同期失敗')+' · 勤務：'+label[report.results.shift.status]+'／Google：'+label[report.results.google.status];localStorage.setItem(KEYS.syncReport,JSON.stringify({at:report.at,status:report.status,summary}));renderSyncReport();$('syncStatus').textContent=summary;const detail=Object.values(report.results).filter(x=>x.status==='failed').map(x=>x.message).join('／');showMsg(summary+(detail?'：'+detail:''),report.status!=='success');refresh();}
+ onResult:report=>{const label={success:'成功',failed:'失敗',skipped:'未接続'};const shiftValue=report.results.shift.value,shiftLabel=report.results.shift.status==='skipped'?'対象外':label[report.results.shift.status]+(shiftValue&&report.results.shift.status==='success'?`（追加${shiftValue.created}・変更${shiftValue.updated}・削除${shiftValue.deleted}）`:'');const summary=(report.status==='success'?'同期完了':report.status==='partial'?'一部失敗':'同期失敗')+' · 勤務：'+shiftLabel+'／Google：'+(report.results.google.status==='skipped'&&isSignedIn()?'連携OFF':label[report.results.google.status]);localStorage.setItem(KEYS.syncReport,JSON.stringify({at:report.at,status:report.status,summary}));renderSyncReport();$('syncStatus').textContent=summary;const detail=Object.values(report.results).filter(x=>x.status==='failed').map(x=>x.message).join('／');showMsg(summary+(detail?'：'+detail:''),report.status!=='success');refresh();}
 });
 function bind(){
  $('quickLogin').addEventListener('click',connect);$('shareApp').addEventListener('click',shareApp);
  $('resolveSync').addEventListener('click',resolveSync);
- $('syncAllBtn').addEventListener('click',()=>syncRunner.run());$('settingsSyncAll').addEventListener('click',()=>syncRunner.run());$('disconnectGoogle').addEventListener('click',disconnectGoogle);
+ $('syncAllBtn').addEventListener('click',()=>syncRunner.run());$('settingsSyncAll').addEventListener('click',()=>syncRunner.run());$('disconnectGoogle').addEventListener('click',disconnectGoogle);$('enableGoogle').addEventListener('click',enableGoogle);
  $('viewDay').addEventListener('click',()=>{state.view='day';render();});$('viewWeek').addEventListener('click',()=>{state.view='week';render();});
  $('openSettings').addEventListener('click',openSettings);$('navSettings').addEventListener('click',openSettings);$('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
  $('loginBtn').addEventListener('click',connect);
