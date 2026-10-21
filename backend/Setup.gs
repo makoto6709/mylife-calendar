@@ -23,14 +23,27 @@ function setupMyLifeShared(){
  if(!/\.apps\.googleusercontent\.com$/.test(SETUP.CLIENT_ID.trim()))throw Error('CLIENT_IDを入力してください。');
  if(!SETUP.SHIFT_SOURCE_ID.trim())throw Error('SHIFT_SOURCE_IDを入力してください。');
  const shiftName=SpreadsheetApp.openById(SETUP.SHIFT_SOURCE_ID.trim()).getName(); // 読み取りのみ
- const sheetId=SETUP.SHARED_SHEET_ID.trim()||createSharedSheet_(partner);
+ // 再実行しても重複作成しないよう、同名の自分のファイル・カレンダーがあれば再利用する。
+ const sheetId=SETUP.SHARED_SHEET_ID.trim()||findOwnedSheet_()||createSharedSheet_(partner);
  checkSharedSheet_(sheetId,owner,partner);
- const calId=SETUP.SHARED_CAL_ID.trim()||createSharedCalendar_(partner);
+ const calId=SETUP.SHARED_CAL_ID.trim()||findOwnedCalendar_()||createSharedCalendar_(partner);
+ ensurePartnerAcl_(calId,owner,partner);
  checkSharedCalendar_(calId,owner,partner);
  const config={clientId:SETUP.CLIENT_ID.trim(),sharedSheetId:sheetId,sharedCalId:calId,workCalId:'',users:{[owner]:{privateSheetId:'',privateCalId:''},[partner]:{privateSheetId:'',privateCalId:''}},shiftSourceId:SETUP.SHIFT_SOURCE_ID.trim()};
  Logger.log('勤務元：'+shiftName+'（読み取りのみ確認）');
  Logger.log('共有DB：https://docs.google.com/spreadsheets/d/'+sheetId+'/edit');
  Logger.log('次の1行をgatewayのスクリプトプロパティ MYLIFE_CONFIG に貼り付けてください：\n'+JSON.stringify(config));
+}
+function findOwnedSheet_(){
+ const me=Session.getEffectiveUser().getEmail().toLowerCase(),found=[],it=DriveApp.getFilesByName('MyLife_共有予定_DB');
+ while(it.hasNext()){const f=it.next();if(!f.isTrashed()&&f.getOwner()&&f.getOwner().getEmail().toLowerCase()===me)found.push(f.getId());}
+ if(found.length>1)throw Error('「MyLife_共有予定_DB」が複数あります。使うファイルのIDをSHARED_SHEET_IDに入力してください：'+found.join(', '));
+ return found[0]||'';
+}
+function findOwnedCalendar_(){
+ const found=CalendarApp.getOwnedCalendarsByName('MyLife 共有').map(c=>c.getId());
+ if(found.length>1)throw Error('「MyLife 共有」カレンダーが複数あります。使うカレンダーのIDをSHARED_CAL_IDに入力してください：'+found.join(', '));
+ return found[0]||'';
 }
 function createSharedSheet_(partner){
  const ss=SpreadsheetApp.create('MyLife_共有予定_DB');const sh=ss.getSheets()[0];
@@ -48,10 +61,12 @@ function checkSharedSheet_(id,owner,partner){
  if(new Set(editors).size!==2||!editors.includes(owner)||!editors.includes(partner)||viewers.length)throw Error('共有DBの編集者を本人と相手の2人だけにしてください（現在：'+editors.concat(viewers).join(', ')+'）。');
 }
 function createSharedCalendar_(partner){
- const cal=CalendarApp.createCalendar('MyLife 共有',{timeZone:'Asia/Tokyo',summary:'MyLife Calendarの共有予定（2人のみ）'});
- // 相手もACLを確認できるよう「変更および共有の管理権限」(owner)で共有する。
- calendarApi_('/calendars/'+encodeURIComponent(cal.getId())+'/acl?sendNotifications=true','post',{role:'owner',scope:{type:'user',value:partner}});
- return cal.getId();
+ return CalendarApp.createCalendar('MyLife 共有',{timeZone:'Asia/Tokyo',summary:'MyLife Calendarの共有予定（2人のみ）'}).getId();
+}
+/** 本人だけのACLなら相手を追加する。相手もACLを確認できるよう「変更および共有の管理権限」(owner)。他人が入っていれば何もしない（検査で停止）。 */
+function ensurePartnerAcl_(id,owner,partner){
+ const acl=(calendarApi_('/calendars/'+encodeURIComponent(id)+'/acl','get').items||[]).filter(x=>x.role!=='none');
+ if(acl.length===1&&acl[0].scope&&String(acl[0].scope.value).toLowerCase()===owner)calendarApi_('/calendars/'+encodeURIComponent(id)+'/acl?sendNotifications=true','post',{role:'owner',scope:{type:'user',value:partner}});
 }
 function checkSharedCalendar_(id,owner,partner){
  const acl=(calendarApi_('/calendars/'+encodeURIComponent(id)+'/acl','get').items||[]).filter(x=>x.role!=='none');
@@ -60,5 +75,6 @@ function checkSharedCalendar_(id,owner,partner){
 }
 function calendarApi_(path,method,body){
  const options={method,headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true};if(body){options.contentType='application/json';options.payload=JSON.stringify(body);}
- const res=UrlFetchApp.fetch('https://www.googleapis.com/calendar/v3'+path,options);if(res.getResponseCode()>=300)throw Error('Calendar API '+res.getResponseCode()+'：'+res.getContentText().slice(0,300));return JSON.parse(res.getContentText()||'{}');
+ const res=UrlFetchApp.fetch('https://www.googleapis.com/calendar/v3'+path,options);if(res.getResponseCode()===403&&/has not been used|is disabled/.test(res.getContentText()))throw Error('Calendar APIが無効です。エラー内のURL（console.developers.google.com/apis/api/calendar-json…）を開いて「有効にする」を押し、数分後に再実行してください。');
+ if(res.getResponseCode()>=300)throw Error('Calendar API '+res.getResponseCode()+'：'+res.getContentText().slice(0,300));return JSON.parse(res.getContentText()||'{}');
 }
