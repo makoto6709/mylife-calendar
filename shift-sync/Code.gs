@@ -25,7 +25,7 @@ function setupMyLifeShift(){
     const c=CalendarApp.createCalendar('MyLife勤務',{timeZone:'Asia/Tokyo',summary:'勤務シフト表からの読み取り専用連携'});
     p.setProperty('SHIFT_WORK_CALENDAR_ID',c.getId());
   }
-  installMyLifeTrigger();
+  syncMyLifeShifts();
   Logger.log('MyLife勤務 calendar ID: '+p.getProperty('SHIFT_WORK_CALENDAR_ID'));
 }
 
@@ -99,11 +99,9 @@ function syncMyLifeShifts(){
   }finally{lock.releaseLock();}
 }
 
-/** 最初に1度手動実行して、毎朝9時ごろの時間トリガーを設定。 */
-function installMyLifeTrigger(){
-  syncMyLifeShifts();
+/** 手動運用。自分の勤務同期トリガーのみ解除。 */
+function disableMyLifeAutoSync(){
   ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()==='syncMyLifeShifts').forEach(t=>ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('syncMyLifeShifts').timeBased().atHour(9).nearMinute(0).everyDays(1).inTimezone('Asia/Tokyo').create();
 }
 
 function asDateTime_(year,month,day,input){

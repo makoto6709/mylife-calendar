@@ -1,6 +1,7 @@
-MyLife Calendar v2
-公開：https://makoto6709.github.io/mylife-calendar/
-README_設定手順.mdから開始してください。
-GitHub公開・体験モード操作・英数字画像OCRの動作確認済み。Google実連携・iPhoneは未完了。
-詳細はdocs/検証状況.mdに記載しています。
-既存の勤務シフト管理アプリにコードを追加しないでください。
+MyLife Calendar v2.2（2026-10-21仕様）
+https://makoto6709.github.io/mylife-calendar/
+画像取り込みは廃止。同期は「すべて同期」のみ。
+予定保存はMyLife Sheets、Google送信は手動同期時。
+本体Google接続の初期設定・2アカウント実検証は未完了です。
+README_設定手順.md と docs/検証状況.md を確認してください。
+既存の勤務シフト管理アプリは変更しないでください。

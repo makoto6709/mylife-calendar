@@ -4,7 +4,14 @@
   "sharedCalId": "REPLACE",
   "workCalId": "REPLACE",
   "users": {
-    "first@example.com": {"privateSheetId":"", "privateCalId":""},
-    "second@example.com": {"privateSheetId":"", "privateCalId":""}
-  }
+    "first@example.com": {
+      "privateSheetId": "",
+      "privateCalId": ""
+    },
+    "second@example.com": {
+      "privateSheetId": "",
+      "privateCalId": ""
+    }
+  },
+  "shiftSourceId": "REPLACE_WITH_PRIVATE_SHIFT_SOURCE_ID"
 }

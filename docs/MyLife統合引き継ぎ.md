@@ -1,52 +1,25 @@
-# MyLife本体への統合
+# MyLife統合引き継ぎ v2.2
 
-## 境界
+## 境界と保存先
 
-UI(app.js) → Google読み取りAPI／同期GAS → 本人のSheets・Calendar。勤務同期は独立GAS → 勤務カレンダー → PWA。家計簿や既存勤務システムのコードには依存しません。
+core.jsは日本時間・起床計算、sync.jsはボタン操作に起因する統括のみ、app.jsは画面と接続、backend/Code.gsは認証・ACL・Sheets保存・手動reconcile・勤務元読取を担当する。OCR依存なし。
 
-core.jsは副作用のない日付・OCR候補・起床計算です。UIを移行しても再利用できます。app.jsにはUIとAPI呼び出しが残っており、完全なアダプター分割は今後の作業です。サーバーの保存・同期処理はbackendに分離済みです。
+予定DBは既存のevents!A:T：id,owner,scope,title,start,end,allDay,notes,sync,calendarId,googleEventId,source,deleted,createdAt,updatedAt,location,revision,syncState,googleEtag,lastError。schema変更なし。設定と予定は別。tokenはRAMだけで永続化・ログ出力しない。
 
-## eventsの20列（順序固定）
+## 手動同期契約
 
-|列|意味|
-|---|---|
-|id|UUID、MyLifeの安定ID|
-|owner|作成者メール、サーバーが設定|
-|scope|shared / private|
-|title|200文字以内|
-|start / end|RFC3339の日時、終日はYYYY-MM-DD。endは排他的|
-|allDay|true / false|
-|notes|3000文字以内|
-|sync|Google同期ON/OFF。共有範囲とは独立|
-|calendarId / googleEventId|同期先。OFFにしても参照は保持|
-|source|manual。外部Google予定は別表示で原則コピーしない|
-|deleted|論理削除|
-|createdAt / updatedAt|更新日時|
-|location|300文字以内|
-|revision|楽観ロック用の整数|
-|syncState|local / pending-create / pending-update / pending-delete / synced / google-deleted|
-|googleEtag|Googleの競合検出用ETag|
-|lastError|同期失敗の概要。秘密情報を保存しない|
+通常保存はSheetsへ即時反映し外部送信はpending状態へ保留。起動、認証、月変更、復帰、保存ではCalendar events APIを呼ばない。認証・ACL確認やMyLife DB読取/保存は外部同期とは別。
 
-設定はlocalStorageのmylife.calendar.config.v1に保存。ユーザートークンはメモリのみ。クラウド予定は端末に永続キャッシュしません。体験モードの予定だけ別キーに保存します。GASのMYLIFE_CONFIGはサーバー側の信頼する設定で、本人メールから個人DBを決定します。
+「すべて同期」では勤務元をGETして共有DBへupsertし、その後Googleのshared/private reconcileとCalendar表示読取を実行する。各系統の例外を分離。Google未接続ならGoogle系統だけskip。勤務だけの実行にはMyLifeのSheets用ログインが必要であり、完全未ログインで会社の勤務表を取得する設計ではない。
 
-## 同期・競合
+Google Calendar連携解除はgoogleCalendarEnabled=false。Sheets保存の認証・予定データは保持する。連携を再有効化してもボタン操作まで予定を同期しない。last syncは成功日時とは別の最終試行日時で結果併記。localStorageにイベントやtokenを新規キャッシュしない（既存の体験用予定は従来キーを維持）。
 
-- 同じGASデプロイを2人で使用し、ScriptLockで保存を直列化。revisionが古ければ拒否。
-- Sheetsに未完了の意図を先に書き、Google操作を後から実行。Google失敗時もローカルの意図を失わない。
-- UUID由来のGoogleイベントIDで再試行時の二重作成を抑制。衝突はマーカーで照合。
-- Googleの変更はreconcileでSheetsへ取り込み。通常は前面5分ごと／復帰時／手動。バックグラウンド永続同期はしない。
-- GoogleとMyLifeの同時変更はETagを照合して停止。エラーの予定を開き、確認後「Google側の内容を採用して再開」が可能。MyLife案を優先する自動上書きは行わない。必要ならメモなどへ退避してからGoogle案を採用し、再編集する。
-- 同期OFFはGoogle予定を残す。再ON時にGoogleのETagが変わっていれば競合として扱う。
-- Googleでの削除はMyLifeの内容を同期OFFで保持する。外部Google予定は表示元から消える。
-- 共有範囲の変更は既存予定では禁止。別DBへ移動する原子的なトランザクションがないため、データの移し替え機能は未実装。
-- SheetsとCalendarに分散トランザクションはない。Google書込後にSheets反映が失敗した場合も意図を残して止めるが、完全なexactly-onceは保証しない。直接Sheets編集・別GASからの書込はロック対象外で禁止する。
+## 安全性
 
-## 移行
+共有/個人のGoogle ACL検証、revision、lock、Google ETag、安定したGoogle event IDを維持。sync OFFはGoogle側を残す。旧サーバーは自動送信するためprotocol 3確認まで新UIから書き込み禁止。pendingでも再編集できるがGoogle側ETagが変わっていれば上書きしない。競合解決の選択も次回手動同期で実行する。
 
-1. 2人の個人DBは統合後も別権限のまま維持する。
-2. UUID、Google ID、revision、墓石を保持して移す。新IDを採番しない。
-3. 既存v1の15列DBは自動移行しない。バックアップ、列追加とrevision初期化、既存Google IDの検証を別途行う。
-4. OAuth生成元の追加と、必要ならGASのclientIdを同じクライアントへ維持する。
-5. サービスワーカーはMyLife Calendar専用プレフィックスのみ削除し、他機能のキャッシュに触れない。
-6. 元シフト表と勤務シフトアプリは読み取り専用連携のまま維持する。
+Google由来予定は本人のみのCalendarならprivate DB、検証済み共有Calendarならshared DBに保留保存。他の共有Calendarをprivateへ誤取り込みしない。勤務はsource=shiftでshared DBに保存し、通常save/delete APIは拒否。日時ごとの既存行を再利用し、時刻未入力日は保持。元シート・備考・元シフトアプリに書かない。
+
+## 実運用の残作業
+
+backend/config.example.jsonの実設定、OAuthclient、gatewayデプロイ、2人の実ACL検証が未完了。GitHub Pages UIだけではGoogle接続が完成しない。docs/検証状況.mdの未完了項目を引き継ぐ。既存DBを初期化せず移行する。
