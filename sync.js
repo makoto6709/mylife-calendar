@@ -8,7 +8,7 @@ function createRunner({shift,google,isGoogleConnected,clock=()=>new Date().toISO
   try{
    for(const [name,task] of [['shift',shift],['google',google]]){
     if(name==='google'&&!isGoogleConnected()){results[name]={status:'skipped',message:'未接続'};continue;}
-    try{results[name]={status:'success',value:await task()};}catch(e){results[name]={status:'failed',message:e.message||'失敗'};}
+    try{const value=await task();results[name]=value?.skipped?{status:'skipped',message:value.message||'対象外'}:{status:'success',value};}catch(e){results[name]={status:'failed',message:e.message||'失敗'};}
    }
    const attempted=Object.values(results).filter(x=>x.status!=='skipped'),ok=attempted.filter(x=>x.status==='success').length;
    const report={at:clock(),status:ok===attempted.length?'success':ok?'partial':'failed',results};onResult(report);return report;
