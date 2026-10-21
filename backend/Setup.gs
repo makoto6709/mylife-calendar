@@ -4,6 +4,7 @@
  * gatewayのScript Property「MYLIFE_CONFIG」に貼るJSONをログへ出力する。
  * 既存IDを指定した場合は検査だけ行い、データ・見出しを書き換えない。
  * 元の勤務シフト表は名前を読むだけで、一切書き込まない。
+ * 事前にエディタ左の「サービス」＋から「Google Calendar API」（ID: Calendar）を追加すること。
  * この中の値（メール・ID）はGitHubへコミットしないこと。
  */
 const SETUP={
@@ -65,16 +66,18 @@ function createSharedCalendar_(partner){
 }
 /** 本人だけのACLなら相手を追加する。相手もACLを確認できるよう「変更および共有の管理権限」(owner)。他人が入っていれば何もしない（検査で停止）。 */
 function ensurePartnerAcl_(id,owner,partner){
- const acl=(calendarApi_('/calendars/'+encodeURIComponent(id)+'/acl','get').items||[]).filter(x=>x.role!=='none');
- if(acl.length===1&&acl[0].scope&&String(acl[0].scope.value).toLowerCase()===owner)calendarApi_('/calendars/'+encodeURIComponent(id)+'/acl?sendNotifications=true','post',{role:'owner',scope:{type:'user',value:partner}});
+ const acl=aclList_(id);
+ if(acl.length===1&&acl[0].scope&&String(acl[0].scope.value).toLowerCase()===owner)aclAddOwner_(id,partner);
 }
 function checkSharedCalendar_(id,owner,partner){
- const acl=(calendarApi_('/calendars/'+encodeURIComponent(id)+'/acl','get').items||[]).filter(x=>x.role!=='none');
+ const acl=aclList_(id);
  const users=acl.map(x=>x.scope&&x.scope.type==='user'?String(x.scope.value).toLowerCase():'*'+(x.scope&&x.scope.type));
  if(acl.length!==2||!users.includes(owner)||!users.includes(partner)||acl.some(x=>x.role!=='owner'))throw Error('共有カレンダーは本人と相手の2人だけに「変更および共有の管理権限」で共有してください（現在：'+acl.map(x=>(x.scope&&x.scope.value||x.scope&&x.scope.type)+':'+x.role).join(', ')+'）。');
 }
-function calendarApi_(path,method,body){
- const options={method,headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},muteHttpExceptions:true};if(body){options.contentType='application/json';options.payload=JSON.stringify(body);}
- const res=UrlFetchApp.fetch('https://www.googleapis.com/calendar/v3'+path,options);if(res.getResponseCode()===403&&/has not been used|is disabled/.test(res.getContentText()))throw Error('Calendar APIが無効です。エラー内のURL（console.developers.google.com/apis/api/calendar-json…）を開いて「有効にする」を押し、数分後に再実行してください。');
- if(res.getResponseCode()>=300)throw Error('Calendar API '+res.getResponseCode()+'：'+res.getContentText().slice(0,300));return JSON.parse(res.getContentText()||'{}');
+/** Calendar「サービス」（拡張サービス、ID: Calendar）でACLを読み書きする。
+ * Apps Script標準プロジェクトはCloud Consoleから操作できないため、REST直呼びではなく拡張サービスを使う。 */
+function aclList_(id){
+ if(typeof Calendar==='undefined')throw Error('エディタ左の「サービス」の＋から「Google Calendar API」（ID: Calendar）を追加してから再実行してください。');
+ return (Calendar.Acl.list(id).items||[]).filter(x=>x.role!=='none');
 }
+function aclAddOwner_(id,email){Calendar.Acl.insert({role:'owner',scope:{type:'user',value:email}},id,{sendNotifications:true});}
