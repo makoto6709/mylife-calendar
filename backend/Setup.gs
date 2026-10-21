@@ -78,6 +78,6 @@ function checkSharedCalendar_(id,owner,partner){
  * Apps Script標準プロジェクトはCloud Consoleから操作できないため、REST直呼びではなく拡張サービスを使う。 */
 function aclList_(id){
  if(typeof Calendar==='undefined')throw Error('エディタ左の「サービス」の＋から「Google Calendar API」（ID: Calendar）を追加してから再実行してください。');
- return (Calendar.Acl.list(id).items||[]).filter(x=>x.role!=='none');
+ return (Calendar.Acl.list(id).items||[]).filter(x=>x.role!=='none'&&!(x.scope&&x.scope.value===id)); // カレンダー自身のID（…@group.calendar.google.com）は人ではないので除外
 }
 function aclAddOwner_(id,email){Calendar.Acl.insert({role:'owner',scope:{type:'user',value:email}},id,{sendNotifications:true});}

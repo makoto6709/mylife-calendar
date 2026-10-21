@@ -54,7 +54,7 @@ function policy_(token,c,email){
  if(sharedAcl.length!==2||sharedAcl.some(p=>p.scope?.type!=='user'||!c.users[p.scope?.value]||!['owner','writer'].includes(p.role)))throw Error('共有カレンダーは2人のみにしてください。');
  return {sharedSheetId:c.sharedSheetId,privateSheetId:own.privateSheetId,sharedCalId:c.sharedCalId,privateCalId:own.privateCalId,workCalId:c.workCalId||''};
 }
-function acl_(token,calId,label){let a;try{a=call_(token,'https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(calId)+'/acl');}catch(e){if(e.code===403||e.code===404)throw Error(label+'の共有設定を確認できません。2人とも「変更および共有の管理権限」が必要です。');throw e;}if(a.nextPageToken)throw Error(label+'の権限数が多すぎます。');return (a.items||[]).filter(x=>x.role!=='none');}
+function acl_(token,calId,label){let a;try{a=call_(token,'https://www.googleapis.com/calendar/v3/calendars/'+encodeURIComponent(calId)+'/acl');}catch(e){if(e.code===403||e.code===404)throw Error(label+'の共有設定を確認できません。2人とも「変更および共有の管理権限」が必要です。');throw e;}if(a.nextPageToken)throw Error(label+'の権限数が多すぎます。');return (a.items||[]).filter(x=>x.role!=='none'&&x.scope?.value!==calId);/* the calendar's own ID appears as an owner entry */}
 function root_(id){return 'https://sheets.googleapis.com/v4/spreadsheets/'+encodeURIComponent(id);}
 function rows_(token,id){const d=call_(token,root_(id)+'/values/events!A:T');const rows=d.values||[];if(JSON.stringify(rows[0])!==JSON.stringify(H))throw Error('v2ヘッダーが必要です。既存DBの自動書換えはしません。');return rows.slice(1).map((v,i)=>{const o={_row:i+2};H.forEach((k,j)=>o[k]=v[j]??'');for(const k of ['sync','deleted','allDay'])o[k]=String(o[k])==='true';o.revision=+o.revision||0;return o;});}
 /** One batchUpdate for existing rows and one append for new rows (Sheets write quota is per request). */
