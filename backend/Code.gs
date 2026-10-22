@@ -202,10 +202,10 @@ function readShiftDays_(token,sourceId){
     if(!work.includes(shop)){if(!holiday.includes(shop))throw Error('未登録の勤務先：'+key);days.set(key,null);continue;}
     const label=(shop.replace(/店$/,'')+'店').replace('エリアMT店','エリアMT').replace('その他店','その他');
     /* Shop set but no time yet: share it as an all-day 「時間未定」 entry. */
-    if(['','開始時間'].includes(a)&&['','終了時間'].includes(b)){days.set(key,{title:'【勤務】'+label+'（時間未定）',start:key,end:nextDay_(key),allDay:true});continue;}
+    if(['','開始時間'].includes(a)&&['','終了時間'].includes(b)){days.set(key,{title:label+'【勤務】（時間未定）',start:key,end:nextDay_(key),allDay:true});continue;}
     if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test(a)||!/^([01]?\d|2[0-3]):[0-5]\d$/.test(b))throw Error('勤務時刻が不正：'+key);
     const iso=t=>key+'T'+t.padStart(5,'0')+':00+09:00',start=iso(a),end=iso(b);if(end<=start)throw Error('勤務時刻が不正：'+key);
-    days.set(key,{title:'【勤務】'+label,start,end,allDay:false});
+    days.set(key,{title:label+'【勤務】',start,end,allDay:false});
    }
   });
  }

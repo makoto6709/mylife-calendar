@@ -30,4 +30,7 @@ dialog.sheet{margin:auto auto 0;width:100%;max-width:560px;border-radius:20px 20
 .bottomNav button{display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:0;color:#8a99a8;font-size:20px;min-width:72px}
 .bottomNav button span{font-size:11px}
 .bottomNav button.active{color:#248c7f}
-.message{position:fixed;left:12px;right:12px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:12}
+.message{position:fixed;top:auto;left:12px;right:12px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:12;margin:0;max-height:30vh;overflow:auto}
+/* v2.4.2: fit 4 characters per day on a phone */
+.calApp{padding-left:4px;padding-right:4px}
+.week .miniEvent{margin:0 1px;padding:0 2px;letter-spacing:-.3px;text-overflow:clip}
