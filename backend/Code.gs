@@ -99,11 +99,12 @@ function doPost(e){
   if(!e.postData||e.postData.contents.length>20000)throw Error('リクエストが不正です。');
   const b=JSON.parse(e.postData.contents);let c=cfg_();const email=authenticate_(b.token,c);if(b.protocol!==3)throw Error('アプリを最新版に更新してください。');if(b.action==='bootstrap')c=provisionPrivate_(b.token,email);const p=policy_(b.token,c,email);
   if(b.action==='bootstrap')return json_({ok:true,config:p,email,version:3,protocol:3});
-  if(!['save','delete','reconcile','queueResolve','stageExternal','syncShift'].includes(b.action)||!['shared','private'].includes(b.scope))throw Error('操作が不正です。');
+  if(!['save','delete','reconcile','queueResolve','stageExternal','syncShift','saveShiftMemo'].includes(b.action)||!['shared','private'].includes(b.scope))throw Error('操作が不正です。');
   const id=b.scope==='shared'?p.sharedSheetId:p.privateSheetId;
   lock=LockService.getScriptLock();if(!lock.tryLock(25000))throw Error('処理が混み合っています。再試行してください。');
   const list=rows_(b.token,id);
   if(b.action==='syncShift'){if(b.scope!=='shared')throw Error('勤務は共有保存先のみです。');return json_({ok:true,...syncShift_(b.token,c,email,list)});}
+  if(b.action==='saveShiftMemo'){if(b.scope!=='private')throw Error('勤務メモは個人保存先のみです。');return json_({ok:true,record:saveShiftMemo_(b.token,p,email,list,b.record,b.expectedRevision)});}
   if(b.action==='reconcile'){
    const all=list.filter(r=>r.sync&&(!r.deleted||r.syncState!=='synced')&&(!b.record?.afterId||r.id>b.record.afterId)).sort((a,b)=>a.id.localeCompare(b.id));const targets=all.slice(0,25),changed=[];
    let failed=0;targets.forEach(r=>{if(r.syncState==='pending-resolve'){try{let g;try{g=call_(b.token,googleUrl_(r));}catch(e){if(![404,410].includes(e.code))throw e;}r.deleted=false;r.lastError='';if(g&&g.status!=='cancelled')pull_(r,g);else{r.sync=false;r.syncState='local';}}catch(e){r.lastError=e.message;}changed.push(r);}else if(flush_(b.token,r))changed.push(r);if(r.lastError)failed++;});
@@ -112,6 +113,7 @@ function doPost(e){
   const input=b.record;validate_(input);if(input.scope!==b.scope)throw Error('保存先が不正です。');
   const old=list.find(r=>r.id===input.id);
   if(old?.source==='shift')throw Error('勤務予定は読み取り専用です。');
+  if(old?.source==='shift-memo')throw Error('勤務メモは勤務予定の画面から編集してください。');
   if(b.action==='stageExternal')return json_({ok:true,record:stageExternal_(b.token,c,email,id,list,input)});
   if(old?.revision!==b.expectedRevision&&!(old===undefined&&b.expectedRevision===0))throw Error('別の端末で更新されています。再同期してから編集してください。');
   if(b.action==='queueResolve'||b.action==='resolve'){
@@ -154,12 +156,25 @@ function syncShift_(token,c,email,list){
  days.forEach((shift,key)=>{
   const old=existing.get(key);
   if(!shift){if(old&&!old.deleted){old.deleted=true;old.revision++;old.updatedAt=now;old.syncState=old.sync?'pending-delete':'local';writes.push(old);deleted++;}return;}
-  if(old&&!old.deleted&&old.title===shift.title&&old.start===shift.start&&old.end===shift.end){unchanged++;return;}
-  const r={...old,id:old?.id||Utilities.getUuid(),owner:old?.owner||email,scope:'shared',source:'shift',title:shift.title,start:shift.start,end:shift.end,allDay:false,location:'',notes:'',sync:true,calendarId:c.sharedCalId,googleEventId:old?.googleEventId||'',googleEtag:old?.googleEtag||'',deleted:false,createdAt:old?.createdAt||now,updatedAt:now,revision:(old?.revision||0)+1,lastError:''};
+  /* Times erased after being set: keep the timed shift rather than downgrading it to 「時間未定」. */
+  if(shift.allDay&&old&&!old.deleted&&!old.allDay){unchanged++;return;}
+  if(old&&!old.deleted&&old.title===shift.title&&old.start===shift.start&&old.end===shift.end&&!!old.allDay===!!shift.allDay){unchanged++;return;}
+  const r={...old,id:old?.id||Utilities.getUuid(),owner:old?.owner||email,scope:'shared',source:'shift',title:shift.title,start:shift.start,end:shift.end,allDay:!!shift.allDay,location:'',notes:'',sync:true,calendarId:c.sharedCalId,googleEventId:old?.googleEventId||'',googleEtag:old?.googleEtag||'',deleted:false,createdAt:old?.createdAt||now,updatedAt:now,revision:(old?.revision||0)+1,lastError:''};
   r.googleEventId=r.googleEventId||'ml'+r.id.replace(/-/g,'');r.syncState=old?.googleEtag?'pending-update':'pending-create';writes.push(r);old?updated++:created++;
  });
  writeMany_(token,c.sharedSheetId,writes);return {created,updated,deleted,unchanged};
 }
+/** Owner-only memo for a shift: kept in the caller's private DB under the shift's id and never synced to Google. */
+function saveShiftMemo_(token,p,email,list,input,expectedRevision){
+ const notes=String(input?.notes??'').trim();if(!/^[0-9a-f-]{36}$/.test(String(input?.id||''))||notes.length>3000)throw Error('勤務メモの形式が不正です。');
+ const shift=rows_(token,p.sharedSheetId).find(r=>r.id===input.id&&r.source==='shift'&&!r.deleted);if(!shift)throw Error('対象の勤務が見つかりません。');
+ const old=list.find(r=>r.id===input.id);if(old&&old.source!=='shift-memo')throw Error('勤務メモの保存先が不正です。');
+ if((old?.revision||0)!==(+expectedRevision||0))throw Error('別の端末で更新されています。再同期してから編集してください。');
+ const now=new Date().toISOString();
+ const r={...old,id:shift.id,owner:email,scope:'private',title:'勤務メモ',start:shift.start,end:shift.end,allDay:shift.allDay,notes,location:'',sync:false,calendarId:'',googleEventId:'',source:'shift-memo',deleted:false,createdAt:old?.createdAt||now,updatedAt:now,revision:(old?.revision||0)+1,syncState:'local',googleEtag:'',lastError:''};
+ return write_(token,p.privateSheetId,r);
+}
+function nextDay_(key){const d=new Date(key+'T00:00:00Z');d.setUTCDate(d.getUTCDate()+1);return d.toISOString().slice(0,10);}
 function readShiftDays_(token,sourceId){
  const base=root_(sourceId),meta=call_(token,base+'?fields=sheets(properties(title,gridProperties(rowCount)))'),days=new Map(),blocks=[],titles=[];
  const work=['水戸内原','水戸内原店','東海','東海店','下妻','下妻店','エリアMT','その他'],holiday=['H','休','公休','休日','有休','有給','休み希望'];
@@ -185,10 +200,12 @@ function readShiftDays_(token,sourceId){
     /* Blank or the 「勤務先」 placeholder is an unfilled day: keep any existing shift. Only explicit holidays delete. */
     if(!shop||shop==='勤務先')continue;
     if(!work.includes(shop)){if(!holiday.includes(shop))throw Error('未登録の勤務先：'+key);days.set(key,null);continue;}
-    if(['','開始時間'].includes(a)&&['','終了時間'].includes(b))continue;
+    const label=(shop.replace(/店$/,'')+'店').replace('エリアMT店','エリアMT').replace('その他店','その他');
+    /* Shop set but no time yet: share it as an all-day 「時間未定」 entry. */
+    if(['','開始時間'].includes(a)&&['','終了時間'].includes(b)){days.set(key,{title:'【勤務】'+label+'（時間未定）',start:key,end:nextDay_(key),allDay:true});continue;}
     if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test(a)||!/^([01]?\d|2[0-3]):[0-5]\d$/.test(b))throw Error('勤務時刻が不正：'+key);
     const iso=t=>key+'T'+t.padStart(5,'0')+':00+09:00',start=iso(a),end=iso(b);if(end<=start)throw Error('勤務時刻が不正：'+key);
-    days.set(key,{title:'【勤務】'+(shop.replace(/店$/,'')+'店').replace('エリアMT店','エリアMT').replace('その他店','その他'),start,end});
+    days.set(key,{title:'【勤務】'+label,start,end,allDay:false});
    }
   });
  }

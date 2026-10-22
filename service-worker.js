@@ -1,5 +1,5 @@
-const CACHE = 'mylife-calendar-shell-v2.3.1';
-const FILES=['./','./index.html','./styles.css?v=2.3.1','./app.js?v=2.3.1','./core.js?v=2.3.1','./sync.js?v=2.3.1','./deployment.js?v=2.3.1','./manifest.webmanifest','./assets/icon-192.png','./assets/icon-512.png'];
+const CACHE = 'mylife-calendar-shell-v2.3.2';
+const FILES=['./','./index.html','./styles.css?v=2.3.2','./app.js?v=2.3.2','./core.js?v=2.3.2','./sync.js?v=2.3.2','./deployment.js?v=2.3.2','./manifest.webmanifest','./assets/icon-192.png','./assets/icon-512.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)).then(()=>self.skipWaiting()));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(x=>x.startsWith('mylife-calendar-shell-')&&x!==CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()));});
 self.addEventListener('fetch',e=>{
