@@ -12,7 +12,7 @@ let config={...defaults,...parseJson(KEYS.config,{})};for(const k of ['clientId'
 const {dateKey,keyAdd,makeLocalISO,timeLocal,workTravel,alarmTimes}=MyLifeCore;
 const today=new Date(dateKey()+'T12:00:00+09:00');const state={month:new Date(today.getFullYear(),today.getMonth(),1),selected:dateKey(today),filter:'private',token:'',email:'',mode:'demo',records:[],external:[],visible:[],allCalendars:[],fetchedCalIds:new Set(),busy:false,editing:null,expiresAt:0,weekStart:'',weekCount:78,index:new Map()};
 // The calendar is one continuous list of weeks; start three months back and extend on scroll.
-state.weekStart=(k=>keyAdd(k,-new Date(k+'T12:00:00+09:00').getUTCDay()))(civilKey(new Date(today.getFullYear(),today.getMonth()-3,1)));
+state.weekStart=(k=>keyAdd(k,-new Date(k+'T12:00:00+09:00').getUTCDay()))(dateKey(new Date(today.getFullYear(),today.getMonth()-3,1)));
 const safe=str=>String(str??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 const pad=n=>String(n).padStart(2,'0');
 function civilKey(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
