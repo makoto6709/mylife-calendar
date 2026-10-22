@@ -10,7 +10,9 @@ const defaults={gatewayUrl:window.MYLIFE_DEPLOYMENT?.gatewayUrl||'',clientId:win
 const parseJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))||fallback;}catch{return fallback;}};
 let config={...defaults,...parseJson(KEYS.config,{})};for(const k of ['clientId','gatewayUrl'])if(window.MYLIFE_DEPLOYMENT?.[k])config[k]=window.MYLIFE_DEPLOYMENT[k];
 const {dateKey,keyAdd,makeLocalISO,timeLocal,workTravel,alarmTimes}=MyLifeCore;
-const today=new Date(dateKey()+'T12:00:00+09:00');const state={month:new Date(today.getFullYear(),today.getMonth(),1),selected:dateKey(today),filter:'private',token:'',email:'',mode:'demo',records:[],external:[],visible:[],allCalendars:[],fetchedCalIds:new Set(),busy:false,editing:null,view:'day',expiresAt:0};
+const today=new Date(dateKey()+'T12:00:00+09:00');const state={month:new Date(today.getFullYear(),today.getMonth(),1),selected:dateKey(today),filter:'private',token:'',email:'',mode:'demo',records:[],external:[],visible:[],allCalendars:[],fetchedCalIds:new Set(),busy:false,editing:null,expiresAt:0,weekStart:'',weekCount:78,index:new Map()};
+// The calendar is one continuous list of weeks; start three months back and extend on scroll.
+state.weekStart=(k=>keyAdd(k,-new Date(k+'T12:00:00+09:00').getUTCDay()))(civilKey(new Date(today.getFullYear(),today.getMonth()-3,1)));
 const safe=str=>String(str??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 const pad=n=>String(n).padStart(2,'0');
 function civilKey(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
@@ -52,7 +54,7 @@ async function loadCloud(){ensureCloud();saveConfig();if(!config.sharedSheetId||
 async function syncGoogleCalendars(){
  ensureCloud();await loadCalendarList();
  const scopes=await Promise.allSettled(['shared','private'].map(reconcileScope));
- const from=new Date(state.month.getFullYear(),state.month.getMonth()-1,1),to=new Date(state.month.getFullYear(),state.month.getMonth()+2,1);
+ const from=new Date(state.weekStart+'T00:00:00+09:00'),to=new Date(keyAdd(state.weekStart,state.weekCount*7)+'T00:00:00+09:00');
  const listed=state.allCalendars.filter(c=>checkedCalendarIds().has(c.id));
  // A calendar shared via ACL is not always in the partner's calendarList; still read it.
  const calendars=[...listed,...[config.sharedCalId,config.privateCalId].filter(id=>id&&!listed.some(c=>c.id===id)).map(id=>({id,accessRole:'writer',summary:id===config.sharedCalId?'MyLife 共有':'MyLife 個人'}))];
@@ -70,12 +72,14 @@ function mergeEvents(){
  const used=new Set(),out=[];const map=new Map(state.external.map(e=>[`${e.calendarId}::${e.googleEventId}`,e]));
  // A shift memo is the viewer's own private row keyed by the shift id; it is shown inside the shift, never as its own event.
  const memos=new Map(state.records.filter(r=>r.source==='shift-memo'&&r._store==='private').map(r=>[r.id,r]));
- for(const r of state.records){if(r.deleted||r.source==='shift-memo')continue;const key=`${canonicalCal(r.calendarId)}::${r.googleEventId}`;const g=map.get(key);if(g)used.add(key);
+ for(const r of state.records){if(r.source==='shift-memo')continue;const key=`${canonicalCal(r.calendarId)}::${r.googleEventId}`;const g=map.get(key);if(g)used.add(key);if(r.deleted)continue;/* a pending delete also hides its Google copy */
  // Pending local intent always remains visible, including a failed remote delete/update.
  const memo=r.source==='shift'?memos.get(r.id):null;
  out.push({...r,kind:r.source==='shift'?'shift':r.scope,origin:'sheet',_canEdit:r.source!=='shift',_memo:memo?.notes||'',_memoRev:memo?.revision||0});}
  for(const e of state.external)if(!used.has(`${e.calendarId}::${e.googleEventId}`))out.push(e);return out;
 }
+/** Put one saved/provisional row into the local list and redraw, instead of re-reading both sheets after every save. */
+function upsertLocal(rec,store){const n={...rec,_store:store,origin:'sheet',kind:rec.source==='shift'?'shift':rec.scope==='shared'?'shared':'private'};const i=state.records.findIndex(x=>x.id===n.id&&x._store===store);if(i>=0)state.records[i]={...state.records[i],...n};else state.records.push(n);state.visible=mergeEvents();render();}
 async function refresh(){if(state.busy)return;setBusy(true);try{if(state.mode==='cloud')await loadCloud();else loadDemo();return true;}catch(e){showMsg(`予定を読み込めません：${e.message}`,true);return false;}finally{setBusy(false);}}
 async function connect(after){saveConfig();if(!config.clientId||!config.clientId.endsWith('.apps.googleusercontent.com')){showMsg('Google接続の初期設定が準備中です。今は体験モードを利用できます。',true);openSettings();return;}if(!window.google?.accounts?.oauth2){showMsg('Google認証ライブラリを読み込めません。ネット接続を確認してください。',true);return;}
  const client=google.accounts.oauth2.initTokenClient({client_id:config.clientId,scope:SCOPE,error_callback:error=>showMsg('認証画面を開けませんでした。Safariから開いて接続をお試しください。',true),callback:async response=>{if(response.error||!response.access_token){showMsg('Google認証に失敗しました。',true);return;}state.token=response.access_token;state.expiresAt=Date.now()+(+response.expires_in||3600)*1000;state.mode='cloud';state.protocol=0;state.email='';state.records=[];state.external=[];state.visible=[];render();try{const info=await api('https://www.googleapis.com/oauth2/v3/userinfo');state.email=info.email||'';$('connectionPill').textContent='Google接続中';await bootstrap();syncInputs();if(await refresh()){if(typeof after==='function')await after();else showMsg('接続しました。設定の「すべて同期」で外部予定を反映できます。');}}catch(e){showMsg(`接続後の読み込みに失敗：${e.message}`,true);}}});client.requestAccessToken({prompt:'select_account'});
@@ -84,21 +88,49 @@ async function connect(after){saveConfig();if(!config.clientId||!config.clientId
 function isMine(e){if(!state.email)return true;return e.scope==='private'||String(e.owner||'').toLowerCase()===state.email.toLowerCase();}
 function isPartner(e){return e.scope==='shared'&&!isMine(e);}
 function inFilter(e){return state.filter==='shared'?e.scope==='shared':isMine(e);}
-function eventsForDay(day){return state.visible.filter(e=>{if(!inFilter(e))return false;let start,end;if(e.allDay){start=e.start.slice(0,10);end=e.end.slice(0,10);return day>=start&&day<end;}start=new Date(e.start);end=new Date(e.end);if(!Number.isFinite(+start)||!Number.isFinite(+end))return false;const a=new Date(`${day}T00:00:00+09:00`),b=new Date(`${keyAdd(day,1)}T00:00:00+09:00`);return start<b&&end>a;}).sort((a,b)=>a.start.localeCompare(b.start));}
-function eventCard(e,showDay,onOpen){const btn=document.createElement('button');btn.type='button';btn.className=`eventCard ${e.kind}${isPartner(e)?' partner':''}`;btn.innerHTML=`<span class="eventColor"></span><span class="eventContent"><strong>${safe(e.title)}</strong><small>${showDay?safe(e._shownDay)+' ':''}${safe(eventTime(e))}${e.syncState?.startsWith('pending')?' · 同期待ち':''}${e.lastError?' · 要確認':''}${e._memo?' · メモあり':''}　·　${isPartner(e)?'相手の予定 · ':''}${safe(e.kind==='shift'?'勤務（編集不可）':e.kind==='shared'?'共有':e.kind==='private'?'個人':`Google · ${e._calendarName||''}`)}</small></span><span class="eventArrow">›</span>`;btn.addEventListener('click',()=>onOpen(e));return btn;}
+/** Days (JST keys) an event covers; all-day end is exclusive. */
+function dayKeysOf(e){let a,b;if(e.allDay){a=String(e.start).slice(0,10);b=keyAdd(String(e.end).slice(0,10),-1);}else{const s=new Date(e.start),t=new Date(e.end);if(!Number.isFinite(+s)||!Number.isFinite(+t))return [];a=dateKey(s);b=dateKey(new Date(Math.max(+s,+t-1)));}if(!a||b<a)b=a;const out=[];for(let k=a,i=0;k<=b&&i<370;k=keyAdd(k,1),i++)out.push(k);return out;}
+// One pass per render: day → events for the current 個人/共有 filter (rendering hundreds of days must not rescan every event per day).
+function buildIndex(){const idx=new Map();for(const e of state.visible){if(!inFilter(e))continue;e._days=dayKeysOf(e);for(const k of e._days){if(!idx.has(k))idx.set(k,[]);idx.get(k).push(e);}}for(const l of idx.values())l.sort((a,b)=>String(a.start).localeCompare(String(b.start)));state.index=idx;}
+function eventsForDay(day){return state.index.get(day)||[];}
+function eventCard(e,showDay,onOpen){const btn=document.createElement('button');btn.type='button';btn.className=`eventCard ${e.kind}${isPartner(e)?' partner':''}`;btn.innerHTML=`<span class="eventColor"></span><span class="eventContent"><strong>${safe(e.title)}</strong><small>${showDay?safe(e._shownDay)+' ':''}${safe(eventTime(e))}${e.syncState==='saving'?' · 保存中':e.syncState?.startsWith('pending')?' · 同期待ち':''}${e.lastError?' · 要確認':''}${e._memo?' · メモあり':''}　·　${isPartner(e)?'相手の予定 · ':''}${safe(e.kind==='shift'?'勤務（編集不可）':e.kind==='shared'?'共有':e.kind==='private'?'個人':`Google · ${e._calendarName||''}`)}</small></span><span class="eventArrow">›</span>`;btn.addEventListener('click',()=>onOpen(e));return btn;}
 const dayLabel=key=>{const d=new Date(`${key}T12:00:00`);return `${d.getMonth()+1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`;};
 /** Tapping a date pops up that day's events (current 個人/共有 filter), with add and previous/next day. */
-function openDay(key){state.selected=key;const d=new Date(`${key}T12:00:00`);if(d.getFullYear()!==state.month.getFullYear()||d.getMonth()!==state.month.getMonth())state.month=new Date(d.getFullYear(),d.getMonth(),1);render();
+function markSelected(){for(const row of $('calendarGrid').children)for(const c of row.children||[])if(c.dataset?.day)c.className=c.className.replace(/ selected/g,'')+(c.dataset.day===state.selected?' selected':'');}
+function openDay(key){state.selected=key;markSelected();
  $('dayDialogTitle').textContent=dayLabel(key)+'の予定';const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key);
  if(!list.length)root.innerHTML='<div class="empty">この日の予定はありません。</div>';else for(const e of list)root.appendChild(eventCard(e,false,x=>{$('dayDialog').close();openEvent(x);}));
  showDialog($('dayDialog'));}
 function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLocal(e.end)}`;}
-function render(){const m=state.month;$('monthTitle').textContent=monthText(m);const start=new Date(m.getFullYear(),m.getMonth(),1);start.setDate(start.getDate()-start.getDay());const root=$('calendarGrid');root.replaceChildren();
- for(let i=0;i<42;i++){const d=new Date(start);d.setDate(start.getDate()+i);const key=civilKey(d);const list=eventsForDay(key);const cell=document.createElement('div');cell.className=`day${d.getMonth()!==m.getMonth()?' outside':''}${key===state.selected?' selected':''}${key===dateKey(new Date())?' today':''}`;cell.dataset.day=key;const num=document.createElement('span');num.className='daynum';num.textContent=d.getDate();cell.appendChild(num);for(const e of list.slice(0,2)){const chip=document.createElement('div');chip.className=`miniEvent ${e.kind}${isPartner(e)?' partner':''}`;chip.textContent=e.kind==='shift'?`勤務 ${e.title.replace('【勤務】','')}`:e.title;cell.appendChild(chip);}if(list.length>2){const more=document.createElement('div');more.className='more';more.textContent=`＋${list.length-2}件`;cell.appendChild(more);}cell.addEventListener('click',()=>openDay(key));root.appendChild(cell);}
- const sel=new Date(`${state.selected}T12:00:00`);$('selectedDayTitle').textContent=`${sel.getMonth()+1}月${sel.getDate()}日（${'日月火水木金土'[sel.getDay()]}）の予定`;
- const dayRoot=$('dayEvents');dayRoot.replaceChildren();const weekStart=keyAdd(state.selected,-new Date(state.selected+'T12:00:00+09:00').getUTCDay());const shownDays=state.view==='week'?Array.from({length:7},(_,i)=>keyAdd(weekStart,i)):[state.selected];const dayEvents=shownDays.flatMap(day=>eventsForDay(day).map(e=>({...e,_shownDay:day})));if(state.view==='week')$('selectedDayTitle').textContent=weekStart+' からの1週間';if(!dayEvents.length){dayRoot.innerHTML='<div class="empty">この日の予定はありません。<br>日付をタップして「＋この日に追加」から登録できます。</div>';}else for(const e of dayEvents)dayRoot.appendChild(eventCard(e,state.view==='week',openEvent));
- renderAlarmPreview();$('connectionPill').textContent=state.mode==='cloud'?'Google接続中':'体験モード';$('greeting').textContent=state.email?`${state.email} で接続中`:'共有も、じぶんだけの予定も。';
+const LANES=5;
+function render(){buildIndex();const root=$('calendarGrid');root.replaceChildren();const todayKey=dateKey(new Date());
+ for(let w=0;w<state.weekCount;w++)root.appendChild(renderWeek(keyAdd(state.weekStart,w*7),todayKey));
+ updateMonthTitle();renderAlarmPreview();$('connectionPill').textContent=state.mode==='cloud'?'Google接続中':'体験モード';$('navScopeLabel').textContent=state.filter==='shared'?'共有':'個人';
 }
+/** One week row: 7 day cells behind, events laid out in up to 5 lanes; a multi-day event is one bar across its days. */
+function renderWeek(ws,todayKey){const row=document.createElement('div');row.className='week';row.dataset.week=ws;const days=Array.from({length:7},(_,i)=>keyAdd(ws,i));
+ const monthEnd=days.find(k=>keyAdd(k,1).slice(8)==='01');if(monthEnd)row.dataset.monthEnd=monthEnd.slice(0,7);
+ days.forEach((k,i)=>{const mon=+k.slice(5,7);const cell=document.createElement('div');cell.className=`day m${mon%2}${k===todayKey?' today':''}${k===state.selected?' selected':''}`;cell.dataset.day=k;cell.style.gridColumn=String(i+1);const num=document.createElement('span');num.className='daynum';num.textContent=k.slice(8)==='01'?`${mon}/1`:String(+k.slice(8));cell.appendChild(num);cell.addEventListener('click',()=>openDay(k));row.appendChild(cell);});
+ const seen=new Set(),evs=[];for(const k of days)for(const e of eventsForDay(k))if(!seen.has(e)){seen.add(e);evs.push(e);}
+ const span=e=>{const c=e._days.map(k=>days.indexOf(k)).filter(i=>i>=0);return [Math.min(...c),Math.max(...c)];};
+ evs.sort((a,b)=>{const[as,ae]=span(a),[bs,be]=span(b);return (be-bs)-(ae-as)||as-bs||String(a.start).localeCompare(String(b.start));});
+ const lanes=Array.from({length:LANES},()=>Array(7).fill(false)),hidden=Array(7).fill(0);
+ for(const e of evs){const[s,t]=span(e);let lane=-1;for(let l=0;l<LANES&&lane<0;l++){let free=true;for(let c=s;c<=t;c++)if(lanes[l][c])free=false;if(free)lane=l;}
+  if(lane<0){for(let c=s;c<=t;c++)hidden[c]++;continue;}for(let c=s;c<=t;c++)lanes[lane][c]=true;
+  const chip=document.createElement('div');chip.className=`miniEvent ${e.kind}${isPartner(e)?' partner':''}${e._days.length>1?' span':''}${e._days[0]<days[0]?' contL':''}${e._days[e._days.length-1]>days[6]?' contR':''}${e.syncState==='saving'?' saving':''}`;
+  chip.style.gridColumn=`${s+1} / ${t+2}`;chip.style.gridRow=String(lane+2);chip.textContent=e.kind==='shift'?`勤務 ${e.title.replace('【勤務】','')}`:e.title;row.appendChild(chip);}
+ hidden.forEach((n,i)=>{if(!n)return;const more=document.createElement('div');more.className='more';more.style.gridColumn=String(i+1);more.style.gridRow=String(LANES+2);more.textContent=`+${n}`;row.appendChild(more);});
+ return row;}
+// Header month: the latest month whose last week is on screen (falls back to the first visible week).
+function visibleMonth(){const rows=$('calendarGrid').children;const top=$('calTop')?.getBoundingClientRect?.().bottom||0,bottom=(window.innerHeight||800)-($('bottomNav')?.getBoundingClientRect?.().height||0);let best='',first='';
+ for(const r of rows){if(!r.getBoundingClientRect)break;const b=r.getBoundingClientRect();if(b.bottom<=top||b.top>=bottom)continue;if(!first)first=r.dataset.week;if(r.dataset.monthEnd&&r.dataset.monthEnd>best)best=r.dataset.monthEnd;}
+ return best||(first?keyAdd(first,3):dateKey()).slice(0,7);}
+function updateMonthTitle(){const ym=visibleMonth();$('yearTitle').textContent=ym.slice(0,4);$('monthTitle').textContent=`${+ym.slice(5,7)}月`;}
+function scrollToDay(key){const row=[...$('calendarGrid').children].find(r=>r.dataset.week<=key&&key<=keyAdd(r.dataset.week,6));if(!row||typeof window.scrollTo!=='function')return;window.scrollTo(0,Math.max(0,row.offsetTop-($('calTop')?.offsetHeight||0)-8));updateMonthTitle();}
+// Scrolling moves the months; near either end, more weeks are added (keeping the view still when prepending).
+function onScroll(){if(onScroll.pending)return;onScroll.pending=true;(window.requestAnimationFrame||setTimeout)(()=>{onScroll.pending=false;updateMonthTitle();const doc=document.documentElement;if(!doc)return;
+ if(window.scrollY<300){const before=doc.scrollHeight;state.weekStart=keyAdd(state.weekStart,-26*7);state.weekCount+=26;render();window.scrollBy(0,doc.scrollHeight-before);}
+ else if(window.scrollY+window.innerHeight>doc.scrollHeight-500){state.weekCount+=26;render();}});}
 function getTomorrowShift(){const tomorrow=keyAdd(dateKey(new Date()),1);return state.visible.filter(e=>e.kind==='shift'&&inLocal(e.start)===tomorrow&&!e.allDay).sort((a,b)=>a.start.localeCompare(b.start))[0];}
 function renderAlarmPreview(){const shift=getTomorrowShift(),root=$('alarmPreview');if(!shift){root.innerHTML='<div class="alarmNote">明日の勤務シフトはありません（または未取得です）。<br>アラームはiPhoneショートカットが21時に確認します。</div>';return;}const times=alarmTimes(shift);root.innerHTML=`<div class="alarmNote">${safe(shift.title)} · ${safe(timeLocal(shift.start))}開始</div><div class="alarmTime">${times?times.join(' / '):'勤務先の移動時間が未設定'}</div><div class="alarmNote">${times?'朝の準備40分＋通勤時間で計算':'勤務先名と通勤時間の対応をご確認ください。'}<br>※ここでの表示は確認用。実際のアラーム作成はショートカットが行います。</div>`;}
 function showDialog(el){if(!el.open)el.showModal();}
@@ -116,7 +148,7 @@ function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError
  if(e?.kind==='shift'&&state.mode==='cloud'){$('eventNotesLabel').textContent='自分だけのメモ';$('eventNotes').value=e._memo||'';$('eventNotes').disabled=false;$('saveEvent').classList.remove('hidden');if(!e.lastError)$('editHint').textContent='勤務は辻岡シフトから自動で取り込みます（編集不可）。メモは自分だけに表示され、相手やGoogleカレンダーには送られません。';}
  scopeToggle();showDialog($('eventDialog'));}
 async function saveShiftMemo(){const e=state.editing;setBusy(true);
- try{await gateway('saveShiftMemo','private',{id:e.id,notes:$('eventNotes').value.trim()},e._memoRev||0);$('eventDialog').close();showMsg('勤務メモを保存しました（自分だけに表示）。');setBusy(false);await refresh();}
+ try{const result=await gateway('saveShiftMemo','private',{id:e.id,notes:$('eventNotes').value.trim()},e._memoRev||0);$('eventDialog').close();upsertLocal(result.record,'private');showMsg('勤務メモを保存しました（自分だけに表示）。');}
  catch(err){showMsg(`保存に失敗しました：${err.message}`,true);}finally{setBusy(false);}}
 function buildFromForm(){const allDay=$('allDay').checked;const sd=$('startDate').value,ed=$('endDate').value;if(!sd||!ed)throw Error('開始日と終了日を入力してください。');let start,end;
  if(allDay){start=sd;end=keyAdd(ed,1);if(ed<sd)throw Error('終了日を開始日以降にしてください。');}
@@ -130,24 +162,31 @@ async function saveEvent(e){e.preventDefault();if(state.busy)return;if(state.edi
  if(state.mode==='demo'){
  const items=parseJson(KEYS.demo,[]);if(old){const idx=items.findIndex(x=>x.id===old.id);if(idx<0)throw Error('元の予定が見つかりません。');items[idx]={...items[idx],...draft,updatedAt:new Date().toISOString()};}else items.push({...draft,id:crypto.randomUUID(),owner:'demo',calendarId:'',googleEventId:'',source:'manual',deleted:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});localStorage.setItem(KEYS.demo,JSON.stringify(items));
  }else if(old?.origin==='google'){
- await stageExternal(old,draft,false);
+ const result=await stageExternal(old,draft,false);$('eventDialog').close();upsertLocal(result.record,result.record.scope);showMsg('予定を保存しました。');return;
  }else{
- const r={...old,...draft,id:old?.id||($('eventId').value||crypto.randomUUID())};$('eventId').value=r.id;
- const result=await gateway('save',draft.scope,r,old?.revision||0);
- if(result.record.lastError)showMsg('予定は保存済みです。Google同期は未完了：'+result.record.lastError,true);
+ // Show the event at once and close the dialog; the gateway round trip (a few seconds on Apps Script) finishes in the background.
+ const r={...old,...draft,id:old?.id||($('eventId').value||crypto.randomUUID())};$('eventId').value=r.id;const snapshot=state.records.slice();
+ $('eventDialog').close();upsertLocal({...r,owner:old?.owner||state.email,source:old?.source||'manual',revision:old?.revision||0,syncState:'saving',deleted:false},draft.scope);showMsg('保存しています…');
+ try{const result=await gateway('save',draft.scope,r,old?.revision||0);upsertLocal(result.record,draft.scope);showMsg(result.record.lastError?'予定は保存済みです。Google同期は未完了：'+result.record.lastError:'予定を保存しました。',!!result.record.lastError);}
+ catch(err){state.records=snapshot;state.visible=mergeEvents();render();showMsg(`保存に失敗しました：${err.message}`,true);}
+ return;
  }
  $('eventDialog').close();showMsg('予定を保存しました。');setBusy(false);await refresh();
  }catch(err){showMsg(`保存に失敗しました：${err.message}`,true);}finally{setBusy(false);}
 }
 async function removeEvent(){const e=state.editing;if(!e||state.busy)return;if(!window.confirm(`「${e.title}」を削除しますか？`))return;setBusy(true);try{
  if(state.mode==='demo'){const items=parseJson(KEYS.demo,[]);localStorage.setItem(KEYS.demo,JSON.stringify(items.filter(x=>x.id!==e.id)));}
- else if(e.origin==='google'){if(!e._canEdit)throw Error('削除権限がありません。');await stageExternal(e,e,true);}
- else{await gateway('delete',e.scope,e,e.revision||0);}
+ else if(e.origin==='google'){if(!e._canEdit)throw Error('削除権限がありません。');const result=await stageExternal(e,e,true);$('eventDialog').close();state.external=state.external.filter(x=>!(x.calendarId===e.calendarId&&x.googleEventId===e.googleEventId));upsertLocal(result.record,result.record.scope);showMsg('予定を削除しました。「すべて同期」でGoogleにも反映します。');return;}
+ else{
+ // Remove from view at once; restore if the gateway refuses.
+ const snapshot=state.records.slice();$('eventDialog').close();upsertLocal({...e,deleted:true},e._store||e.scope);showMsg('削除しています…');
+ try{const result=await gateway('delete',e.scope,e,e.revision||0);upsertLocal(result.record,e._store||e.scope);showMsg('予定を削除しました。');}
+ catch(err){state.records=snapshot;state.visible=mergeEvents();render();showMsg(`削除に失敗しました：${err.message}`,true);}
+ return;}
  $('eventDialog').close();showMsg('予定を削除しました。');setBusy(false);await refresh();
  }catch(err){showMsg(`削除に失敗しました：${err.message}`,true);}finally{setBusy(false);}}
 function openSettings(){syncInputs();showDialog($('settingsDialog'));renderSyncReport();}
 function demoMode(){state.mode='demo';state.token='';state.email='';state.records=[];state.external=[];state.visible=[];$('settingsDialog').close();loadDemo();showMsg('体験モードに切り替えました。データはこの端末だけに保存されます。');}
-function nextMonth(diff){state.month=new Date(state.month.getFullYear(),state.month.getMonth()+diff,1);state.selected=civilKey(new Date(state.month.getFullYear(),state.month.getMonth(),1));refresh();}
 async function shareApp(){
  const url=new URL(location.pathname,location.origin).href;
  try{if(navigator.share)await navigator.share({title:'MyLife Calendar',text:'ふたりのカレンダー。Googleで接続して利用を開始できます。',url});else if(navigator.clipboard){await navigator.clipboard.writeText(url);showMsg('共有リンクをコピーしました。相手に送ってください。');}else showMsg('アドレス欄のURLをコピーして共有してください。');}catch(err){if(err.name!=='AbortError')showMsg('共有できませんでした。アドレス欄のURLをコピーしてください。',true);}
@@ -172,15 +211,16 @@ function bind(){
  $('resolveSync').addEventListener('click',resolveSync);
  // The token lives in RAM only, so an iPhone reload signs out; pressing sync then reconnects first and syncs right after.
  $('settingsSyncAll').addEventListener('click',()=>isSignedIn()||!(config.clientId&&config.gatewayUrl)?syncRunner.run():connect(()=>syncRunner.run()));$('disconnectGoogle').addEventListener('click',disconnectGoogle);$('enableGoogle').addEventListener('click',enableGoogle);
- $('viewDay').addEventListener('click',()=>{state.view='day';render();});$('viewWeek').addEventListener('click',()=>{state.view='week';render();});
- $('openSettings').addEventListener('click',openSettings);$('connectionPill').addEventListener('click',openSettings);$('navSettings').addEventListener('click',openSettings);$('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
+ $('navSettings').addEventListener('click',openSettings);$('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
  $('loginBtn').addEventListener('click',()=>connect());
- $('prevMonth').addEventListener('click',()=>nextMonth(-1));$('nextMonth').addEventListener('click',()=>nextMonth(1));$('todayBtn').addEventListener('click',()=>{state.month=new Date(today.getFullYear(),today.getMonth(),1);state.selected=dateKey(new Date());refresh();});
+ $('todayBtn').addEventListener('click',()=>{state.selected=dateKey(new Date());markSelected();scrollToDay(state.selected);});
+ // Bottom menu: one button toggles 個人 ⇄ 共有.
+ $('navScope').addEventListener('click',()=>{state.filter=state.filter==='shared'?'private':'shared';render();});
  $('closeDay').addEventListener('click',()=>$('dayDialog').close());$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
- $('filters').addEventListener('click',e=>{const b=e.target.closest('button[data-filter]');if(!b)return;state.filter=b.dataset.filter;for(const x of $('filters').querySelectorAll('button'))x.classList.toggle('selected',x===b);render();});
- for(const id of ['addSelected','navAdd'])$(id).addEventListener('click',()=>openEvent());$('navToday').addEventListener('click',()=>{state.month=new Date(new Date().getFullYear(),new Date().getMonth(),1);state.selected=dateKey(new Date());refresh();});
+ $('navAdd').addEventListener('click',()=>openEvent());
+ window.addEventListener?.('scroll',onScroll,{passive:true});window.addEventListener?.('resize',updateMonthTitle);
  $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);$('eventScope').addEventListener('change',scopeToggle);
 
 }
-bind();syncInputs();loadDemo();renderSyncReport();if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+bind();syncInputs();loadDemo();renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();
