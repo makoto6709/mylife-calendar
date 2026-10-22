@@ -4,3 +4,7 @@
 .advanced{margin-top:16px}.advanced summary{cursor:pointer;padding:14px 0;color:#536477}.hero{flex-wrap:wrap}.top .right{flex-wrap:wrap}#onboardingStatus{line-height:1.7}#quickLogin{white-space:nowrap}
 
 .syncAll{min-height:48px;min-width:132px;touch-action:manipulation}.toolbarBtns{flex-wrap:wrap}#disconnectGoogle{margin-top:8px}#syncSummary{overflow-wrap:anywhere}
+/* Day sheet and partner events (v2.3.5) */
+dialog.sheet{margin:auto auto 0;width:100%;max-width:560px;border-radius:20px 20px 0 0;max-height:80dvh}
+.miniEvent.partner{background:#fde7ef;color:#b24a72}
+.eventCard.partner .eventColor{background:#e48aa8}
