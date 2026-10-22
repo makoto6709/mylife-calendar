@@ -161,19 +161,25 @@ function syncShift_(token,c,email,list){
  writeMany_(token,c.sharedSheetId,writes);return {created,updated,deleted,unchanged};
 }
 function readShiftDays_(token,sourceId){
- const base=root_(sourceId),meta=call_(token,base+'?fields=sheets(properties(title,gridProperties(rowCount)))'),days=new Map(),blocks=[];
+ const base=root_(sourceId),meta=call_(token,base+'?fields=sheets(properties(title,gridProperties(rowCount)))'),days=new Map(),blocks=[],titles=[];
  const work=['水戸内原','水戸内原店','東海','東海店','下妻','下妻店','エリアMT','その他'],holiday=['H','休','公休','休日','有休','有給','休み希望'];
+ const stat={sheets:0,blocks:0,returned:0,withValues:0,dates:0,inMonth:0};
  for(const sheet of meta.sheets||[]){
-  const name=sheet.properties.title,ym=name.match(/^(\d{4})年(\d{1,2})月度$/);if(!ym)continue;
+  const name=sheet.properties.title,ym=name.match(/^(\d{4})年(\d{1,2})月度$/);titles.push(name);if(!ym)continue;stat.sheets++;
   for(let row=2;row+3<=Math.min(sheet.properties.gridProperties.rowCount,100);row+=5)blocks.push({ty:+ym[1],tm:+ym[2],range:"'"+name.replace(/'/g,"''")+"'!A"+row+':G'+(row+3)});
  }
- for(let i=0;i<blocks.length;i+=100){
-  const part=blocks.slice(i,i+100),res=call_(token,base+'/values:batchGetByDataFilter','post',{valueRenderOption:'FORMATTED_VALUE',dataFilters:part.map(x=>({a1Range:x.range}))}).valueRanges||[];
-  if(res.length!==part.length)throw Error('勤務元の読み取り結果が不完全です。既存予定は保持しました。');
-  part.forEach(({ty,tm},j)=>{const v=res[j].valueRange?.values||[];
+ stat.blocks=blocks.length;
+ const detail=()=>'月度シート'+stat.sheets+'件・読取範囲'+stat.blocks+'件・応答'+stat.returned+'件・値あり'+stat.withValues+'件・日付セル'+stat.dates+'件・月度内'+stat.inMonth+'件'+(stat.sheets?'':'・シート名：'+titles.slice(0,5).join('、'));
+ /* values:batchGet (GET, 4 rows per week only). Split so the URL stays under UrlFetchApp's 2KB limit. */
+ for(let i=0;i<blocks.length;){
+  let url=base+'/values:batchGet?valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS';const part=[];
+  while(i<blocks.length&&(!part.length||url.length+8+encodeURIComponent(blocks[i].range).length<=1800)){url+='&ranges='+encodeURIComponent(blocks[i].range);part.push(blocks[i++]);}
+  const res=call_(token,url).valueRanges||[];stat.returned+=res.length;
+  if(res.length!==part.length)throw Error('勤務元の読み取り結果が不完全です（要求'+part.length+'件・応答'+res.length+'件）。既存予定は保持しました。');
+  part.forEach(({ty,tm},j)=>{const v=res[j].values||[];if(v.length)stat.withValues++;
    for(let col=0;col<7;col++){
-    const dm=String(v[0]?.[col]||'').match(/^\s*(\d{1,2})\/(\d{1,2})/);if(!dm)continue;const m=+dm[1],d=+dm[2],y=tm===1&&m===12?ty-1:ty;
-    if(!((m===tm&&d<=20)||(m===(tm===1?12:tm-1)&&d>=21)))continue;
+    const dm=String(v[0]?.[col]||'').match(/^\s*(\d{1,2})\/(\d{1,2})/);if(!dm)continue;stat.dates++;const m=+dm[1],d=+dm[2],y=tm===1&&m===12?ty-1:ty;
+    if(!((m===tm&&d<=20)||(m===(tm===1?12:tm-1)&&d>=21)))continue;stat.inMonth++;
     const key=y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');if(!Number.isFinite(+new Date(key))||new Date(key).toISOString().slice(0,10)!==key)continue;
     const shop=String(v[1]?.[col]||'').trim(),a=String(v[2]?.[col]||'').trim(),b=String(v[3]?.[col]||'').trim();
     /* Blank or the 「勤務先」 placeholder is an unfilled day: keep any existing shift. Only explicit holidays delete. */
@@ -186,5 +192,5 @@ function readShiftDays_(token,sourceId){
    }
   });
  }
- if(!days.size)throw Error('勤務日付を読み取れません。既存予定は保持しました。');return days;
+ if(!days.size)throw Error('勤務日付を読み取れません（'+detail()+'）。既存予定は保持しました。');return days;
 }
