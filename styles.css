@@ -42,3 +42,5 @@ dialog.sheet{margin:auto auto 0;width:100%;max-width:560px;border-radius:20px 20
 .week .day:nth-child(6) .daynum{color:#6e92c2}
 .week .day:nth-child(7) .daynum{color:#ce6676}
 .week .day.today .daynum{color:#fff}
+.hint.error{color:#a43f3d}
+.hint.error:empty{display:none}
