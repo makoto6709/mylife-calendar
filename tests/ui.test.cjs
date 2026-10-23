@@ -36,7 +36,7 @@ test('signed out: 更新 popup only when the shared events changed',async()=>{
  const run=async seen=>{const gets=[];const fetch=async(url,init)=>{if(!init?.body){gets.push(url);return{ok:true,json:async()=>({ok:true,protocol:3,sharedStamp:'s2'})};}throw Error('no POST expected');};
   const a=setup({clientId:'c.apps.googleusercontent.com',gatewayUrl:'https://script.google.com/macros/s/x/exec',cache,fetch,seen});for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));return{a,gets};};
  const changed=await run('s1');assert.equal(changed.gets.length,1,'one sign-in-free GET, no POST');assert.equal(changed.a.elements.get('updateBanner').classList.contains('hidden'),false,'popup shown for a newer stamp');
- assert.equal(changed.a.elements.get('refreshBtn'),null,'no standing 更新 button');
+ assert.equal(changed.a.elements.has('refreshBtn'),false,'no standing 更新 button');
  changed.a.elements.get('updateNow').handlers.click();assert.equal(changed.a.elements.get('updateBanner').classList.contains('hidden'),true,'tapping 更新 closes the popup and reconnects');
  const same=await run('s2');assert.equal(same.a.elements.get('updateBanner').classList.contains('hidden'),true,'no popup when nothing changed');});
 
