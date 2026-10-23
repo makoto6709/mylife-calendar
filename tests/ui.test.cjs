@@ -24,3 +24,6 @@ test('a saved 非共有 event can be changed to 共有 (copied to the shared she
  const save=calls.find(c=>c.action==='save'),del=calls.find(c=>c.action==='delete');
  assert.equal(save.scope,'shared');assert.equal(save.record.scope,'shared');assert.notEqual(save.record.id,rec.id);assert.equal(save.expectedRevision,0);
  assert.equal(del.scope,'private');assert.equal(del.record.id,rec.id);assert.equal(del.expectedRevision,1);});
+test('iPhone: inputs are 16px (no zoom on focus), no double-tap zoom, and 保存 sits at the top of the event form',()=>{const path=require('node:path');const html=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8'),css=fs.readFileSync(path.join(__dirname,'../styles.css'),'utf8');
+ const form=html.slice(html.indexOf('id="eventForm"'),html.indexOf('</form>',html.indexOf('id="eventForm"')));assert.match(form,/id="saveEventTop" type="submit"/);assert.ok(form.indexOf('saveEventTop')<form.indexOf('id="eventTitle"'),'top 保存 comes before the fields');
+ for(const m of css.matchAll(/input[^{}]*\{[^}]*font-size:(\d+)px/g))assert.ok(+m[1]>=16,'input font '+m[1]+'px would make iOS zoom');assert.match(css,/touch-action:manipulation/);});
