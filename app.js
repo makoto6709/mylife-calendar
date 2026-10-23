@@ -2,7 +2,7 @@
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
-const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1',syncReport:'mylife.calendar.syncReport.v1',cache:'mylife.calendar.cache.v1'};
+const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1',syncReport:'mylife.calendar.syncReport.v1',cache:'mylife.calendar.cache.v1',auth:'mylife.calendar.auth.v1',lastError:'mylife.calendar.lastError.v1'};
 const HEADERS=['id','owner','scope','title','start','end','allDay','notes','sync','calendarId','googleEventId','source','deleted','createdAt','updatedAt','location','revision','syncState','googleEtag','lastError'];
 const SCOPE='openid email https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.metadata.readonly';
 const TZ='Asia/Tokyo';
@@ -84,9 +84,22 @@ function mergeEvents(){
 function saveCache(){if(state.mode!=='cloud'||!state.email)return;try{localStorage.setItem(KEYS.cache,JSON.stringify({email:state.email,at:new Date().toISOString(),records:state.records.filter(r=>r.syncState!=='saving')}));}catch{}}
 function loadCached(){const c=parseJson(KEYS.cache,null);if(!c?.email||!Array.isArray(c.records)||!(config.clientId&&config.gatewayUrl))return false;state.mode='cloud';state.email=c.email;state.records=c.records;state.external=[];state.visible=mergeEvents();render();return true;}
 function upsertLocal(rec,store){const n={...rec,_store:store,origin:'sheet',kind:rec.source==='shift'?'shift':rec.scope==='shared'?'shared':'private'};const i=state.records.findIndex(x=>x.id===n.id&&x._store===store);if(i>=0)state.records[i]={...state.records[i],...n};else state.records.push(n);state.visible=mergeEvents();render();saveCache();}
-async function refresh(){if(state.busy)return;setBusy(true);try{if(state.mode==='cloud')await loadCloud();else loadDemo();return true;}catch(e){showMsg(`予定を読み込めません：${e.message}`,true);return false;}finally{setBusy(false);}}
+// The last problem stays visible in settings so it can be read (and shown in a screenshot) after the red message fades.
+function showLastError(){const e=parseJson(KEYS.lastError,null);if($('lastError'))$('lastError').textContent=e?.msg?`最後のエラー（${new Intl.DateTimeFormat('ja-JP',{timeZone:TZ,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(e.at))}）：${e.msg}`:'';}
+function noteError(msg){try{localStorage.setItem(KEYS.lastError,JSON.stringify({at:new Date().toISOString(),msg}));}catch{}showLastError();}
+function clearLastError(){try{localStorage.removeItem(KEYS.lastError);}catch{}showLastError();}
+// Keep the Google access token for its own lifetime (about 1 hour) so reopening the app soon after does not ask again.
+function saveAuth(){try{localStorage.setItem(KEYS.auth,JSON.stringify({token:state.token,expiresAt:state.expiresAt,email:state.email}));}catch{}}
+function clearAuth(){try{localStorage.removeItem(KEYS.auth);}catch{}}
+function restoreAuth(){const a=parseJson(KEYS.auth,null);if(!a?.token||!(a.expiresAt>Date.now()+60000)||!(config.clientId&&config.gatewayUrl))return false;state.token=a.token;state.expiresAt=a.expiresAt;state.email=a.email||state.email;state.mode='cloud';return true;}
+async function refresh(){if(state.busy)return;setBusy(true);try{if(state.mode==='cloud')await loadCloud();else loadDemo();return true;}catch(e){showMsg(`予定を読み込めません：${e.message}`,true);noteError(`予定を読み込めません：${e.message}`);return false;}finally{setBusy(false);}}
 async function connect(after){saveConfig();if(!config.clientId||!config.clientId.endsWith('.apps.googleusercontent.com')){showMsg('Google接続の初期設定が準備中です。今は体験モードを利用できます。',true);openSettings();return;}if(!window.google?.accounts?.oauth2){showMsg('Google認証ライブラリを読み込めません。ネット接続を確認してください。',true);return;}
- const client=google.accounts.oauth2.initTokenClient({client_id:config.clientId,scope:SCOPE,error_callback:error=>showMsg('認証画面を開けませんでした。Safariから開いて接続をお試しください。',true),callback:async response=>{if(response.error||!response.access_token){showMsg('Google認証に失敗しました。',true);return;}state.token=response.access_token;state.expiresAt=Date.now()+(+response.expires_in||3600)*1000;state.mode='cloud';state.protocol=0;state.email='';/* keep showing the cached calendar until fresh data arrives */try{const info=await api('https://www.googleapis.com/oauth2/v3/userinfo');state.email=info.email||'';$('connectionPill').textContent='Google接続中';await bootstrap();syncInputs();if(await refresh()){if(typeof after==='function')await after();else showMsg('接続しました。設定の「すべて同期」で外部予定を反映できます。');}}catch(e){showMsg(`接続後の読み込みに失敗：${e.message}`,true);}}});client.requestAccessToken({prompt:'select_account'});
+ const client=google.accounts.oauth2.initTokenClient({client_id:config.clientId,scope:SCOPE,error_callback:error=>showMsg('認証画面を開けませんでした。Safariから開いて接続をお試しください。',true),callback:async response=>{if(response.error||!response.access_token){showMsg('Google認証に失敗しました。',true);noteError('Google認証に失敗しました。');return;}
+ // iPhone shows one checkbox per permission; an unchecked one lets sign-in succeed but breaks loading later.
+ const need=SCOPE.split(' ').filter(s=>s.startsWith('https://'));if(google.accounts.oauth2.hasGrantedAllScopes&&!google.accounts.oauth2.hasGrantedAllScopes(response,...need)){const msg='Googleの許可画面で、すべての項目にチェックを入れて許可してください。設定の「Googleアカウントに接続」からやり直せます。';showMsg(msg,true);noteError(msg);return;}
+ state.token=response.access_token;state.expiresAt=Date.now()+(+response.expires_in||3600)*1000;state.mode='cloud';state.protocol=0;state.email='';/* keep showing the cached calendar until fresh data arrives */try{const info=await api('https://www.googleapis.com/oauth2/v3/userinfo');state.email=info.email||'';$('connectionPill').textContent='Google接続中';await bootstrap();saveAuth();syncInputs();if(await refresh()){clearLastError();if(typeof after==='function')await after();}}catch(e){showMsg(`接続後の読み込みに失敗：${e.message}`,true);noteError(`接続後の読み込みに失敗：${e.message}`);}}});
+ // Reconnecting a known account skips the account chooser.
+ client.requestAccessToken(state.email?{prompt:'',login_hint:state.email}:{prompt:'select_account'});
 }
 // 個人 = everything that is mine (my private, my shared, my shifts, my Google). 共有 = every shared event, mine and the partner's.
 function isMine(e){if(!state.email)return true;return e.scope==='private'||String(e.owner||'').toLowerCase()===state.email.toLowerCase();}
@@ -139,13 +152,16 @@ function getTomorrowShift(){const tomorrow=keyAdd(dateKey(new Date()),1);return 
 function renderAlarmPreview(){const shift=getTomorrowShift(),root=$('alarmPreview');if(!shift){root.innerHTML='<div class="alarmNote">明日の勤務シフトはありません（または未取得です）。<br>アラームはiPhoneショートカットが21時に確認します。</div>';return;}const times=alarmTimes(shift);root.innerHTML=`<div class="alarmNote">${safe(shift.title)} · ${safe(timeLocal(shift.start))}開始</div><div class="alarmTime">${times?times.join(' / '):'勤務先の移動時間が未設定'}</div><div class="alarmNote">${times?'朝の準備40分＋通勤時間で計算':'勤務先名と通勤時間の対応をご確認ください。'}<br>※ここでの表示は確認用。実際のアラーム作成はショートカットが行います。</div>`;}
 function showDialog(el){if(!el.open)el.showModal();}
 function clearEventForm(){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=false;state.editing=null;$('eventForm').reset();$('resolveSync').classList.add('hidden');$('eventId').value='';$('eventOrigin').value='';$('eventScope').disabled=false;$('syncGoogle').disabled=false;$('eventDialogTitle').textContent='予定を追加';$('eventNotesLabel').textContent='メモ';$('deleteEvent').classList.add('hidden');$('editHint').classList.add('hidden');$('saveEvent').classList.remove('hidden');$('startDate').value=state.selected;$('endDate').value=state.selected;$('startTime').value='10:00';$('endTime').value='11:00';$('eventScope').value='private';$('allDay').checked=true;$('syncGoogle').checked=false;$('locationField').classList.add('hidden');$('notesField').classList.remove('hidden');allDayToggle();scopeToggle();}
-function allDayToggle(){const disabled=$('allDay').checked;$('startTime').disabled=disabled;$('endTime').disabled=disabled;}
+// Time fields stay tappable while 終日 is on (only dimmed); touching one turns 終日 off.
+function allDayToggle(){const on=$('allDay').checked;$('startTime').classList.toggle('dimmed',on);$('endTime').classList.toggle('dimmed',on);}
+function timeTouched(){if(!$('allDay').checked)return;$('allDay').checked=false;allDayToggle();}
 function scopeToggle(){$('scopeHelp').textContent=$('eventScope').value==='shared'?'共有予定は、2人が追加・編集・削除できます。':'非共有予定は本人専用Googleシートに保存され、相手には表示されません。';}
 function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError){$('resolveSync').classList.remove('hidden');$('editHint').classList.remove('hidden');$('editHint').textContent=e.lastError;}$('eventDialogTitle').textContent=e.kind==='shift'?'勤務シフト':e.origin==='google'?'Googleカレンダーの予定':'予定を編集';$('eventId').value=e.id;$('eventOrigin').value=e.origin;$('eventTitle').value=e.title;$('eventScope').value=e.scope==='private'?'private':'shared';$('startDate').value=inLocal(e.start);$('endDate').value=e.allDay?keyAdd(inLocal(e.end),-1):inLocal(e.end);$('startTime').value=timeLocal(e.start)||'10:00';$('endTime').value=timeLocal(e.end)||'11:00';$('allDay').checked=e.allDay;$('eventNotes').value=e.notes||'';$('eventLocation').value=e.location||'';$('syncGoogle').checked=!!e.sync;
  if(e.kind==='shift'||e.origin==='google')$('eventScope').disabled=true;if(e.kind==='shift')$('syncGoogle').disabled=true;
  if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){$('editHint').classList.remove('hidden');$('editHint').textContent='この予定は読み取り専用です。変更は元のシステムで行ってください。';for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;$('saveEvent').classList.add('hidden');}
  else{$('deleteEvent').classList.remove('hidden');if(e.origin==='google'){$('editHint').classList.remove('hidden');$('editHint').textContent='既存のGoogle予定です。変更・削除は保存後、「すべて同期」を押したときに反映されます。';}}
- if(e.origin==='sheet')$('eventScope').disabled=true;
+ // Own events may switch 共有/非共有 (saved as a move between the two sheets); the partner's stay where they are.
+ if(e.origin==='sheet'&&!isMine(e))$('eventScope').disabled=true;
  }else{for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=false;}
  allDayToggle();if(e?.kind==='shift'||(e?.origin==='google'&&!e._canEdit)){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;}
  // Shift fields stay read-only; only the viewer's own memo is editable and it never reaches the partner or Google.
@@ -169,6 +185,13 @@ async function saveEvent(e){e.preventDefault();if(state.busy)return;
  const items=parseJson(KEYS.demo,[]);if(old){const idx=items.findIndex(x=>x.id===old.id);if(idx<0)throw Error('元の予定が見つかりません。');items[idx]={...items[idx],...draft,updatedAt:new Date().toISOString()};}else items.push({...draft,id:crypto.randomUUID(),owner:'demo',calendarId:'',googleEventId:'',source:'manual',deleted:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});localStorage.setItem(KEYS.demo,JSON.stringify(items));
  }else if(old?.origin==='google'){
  const result=await stageExternal(old,draft,false);$('eventDialog').close();upsertLocal(result.record,result.record.scope);showMsg('予定を保存しました。');return;
+ }else if(old&&old.scope!==draft.scope){
+ // 共有⇄非共有 lives in different sheets: save a copy in the new one, then delete the original.
+ const moved={...draft,id:crypto.randomUUID()};const snapshot=state.records.slice();
+ $('eventDialog').close();upsertLocal({...old,deleted:true},old._store||old.scope);upsertLocal({...moved,owner:state.email,source:'manual',revision:0,syncState:'saving',deleted:false},draft.scope);showMsg('保存しています…');
+ try{const result=await gateway('save',draft.scope,moved,0);upsertLocal(result.record,draft.scope);const gone=await gateway('delete',old.scope,old,old.revision||0);upsertLocal(gone.record,old._store||old.scope);showMsg(draft.scope==='shared'?'共有に変更しました。':'非共有に変更しました。');}
+ catch(err){state.records=snapshot;state.visible=mergeEvents();render();showMsg(`変更に失敗しました：${err.message}（画面を更新して確認してください）`,true);}
+ return;
  }else{
  // Show the event at once and close the dialog; the gateway round trip (a few seconds on Apps Script) finishes in the background.
  const r={...old,...draft,id:old?.id||($('eventId').value||crypto.randomUUID())};$('eventId').value=r.id;const snapshot=state.records.slice();
@@ -193,7 +216,7 @@ async function removeEvent(_,confirmed=false){const e=state.editing;if(!e||state
  $('eventDialog').close();showMsg('予定を削除しました。');setBusy(false);await refresh();
  }catch(err){showMsg(`削除に失敗しました：${err.message}`,true);}finally{setBusy(false);}}
 function openSettings(){syncInputs();showDialog($('settingsDialog'));renderSyncReport();}
-function demoMode(){state.mode='demo';state.token='';state.email='';state.records=[];state.external=[];state.visible=[];$('settingsDialog').close();loadDemo();showMsg('体験モードに切り替えました。データはこの端末だけに保存されます。');}
+function demoMode(){clearAuth();state.mode='demo';state.token='';state.email='';state.records=[];state.external=[];state.visible=[];$('settingsDialog').close();loadDemo();showMsg('体験モードに切り替えました。データはこの端末だけに保存されます。');}
 async function shareApp(){
  const url=new URL(location.pathname,location.origin).href;
  try{if(navigator.share)await navigator.share({title:'MyLife Calendar',text:'ふたりのカレンダー。Googleで接続して利用を開始できます。',url});else if(navigator.clipboard){await navigator.clipboard.writeText(url);showMsg('共有リンクをコピーしました。相手に送ってください。');}else showMsg('アドレス欄のURLをコピーして共有してください。');}catch(err){if(err.name!=='AbortError')showMsg('共有できませんでした。アドレス欄のURLをコピーしてください。',true);}
@@ -212,7 +235,7 @@ const syncRunner=MyLifeSync.createRunner({
  shift:async()=>{ensureCloud();return gateway('syncShift','shared');},
  google:syncGoogleCalendars,
  onBusy:b=>{for(const id of ['settingsSyncAll']){$(id).disabled=b||state.busy;$(id).textContent=b?'同期中…':'↻ 勤務シフトを同期';}},
- onResult:report=>{const label={success:'成功',failed:'失敗',skipped:'未接続'};const shiftValue=report.results.shift.value,shiftLabel=report.results.shift.status==='skipped'?'対象外':label[report.results.shift.status]+(shiftValue&&report.results.shift.status==='success'?`（追加${shiftValue.created}・変更${shiftValue.updated}・削除${shiftValue.deleted}）`:'');const summary=(report.status==='success'?'同期完了':report.status==='partial'?'一部失敗':'同期失敗')+' · 勤務：'+shiftLabel;localStorage.setItem(KEYS.syncReport,JSON.stringify({at:report.at,status:report.status,summary}));renderSyncReport();$('syncStatus').textContent=summary;const detail=Object.values(report.results).filter(x=>x.status==='failed').map(x=>x.message).join('／');showMsg(summary+(detail?'：'+detail:''),report.status!=='success');refresh();}
+ onResult:report=>{const label={success:'成功',failed:'失敗',skipped:'未接続'};const shiftValue=report.results.shift.value,shiftLabel=report.results.shift.status==='skipped'?'対象外':label[report.results.shift.status]+(shiftValue&&report.results.shift.status==='success'?`（追加${shiftValue.created}・変更${shiftValue.updated}・削除${shiftValue.deleted}）`:'');const summary=(report.status==='success'?'同期完了':report.status==='partial'?'一部失敗':'同期失敗')+' · 勤務：'+shiftLabel;localStorage.setItem(KEYS.syncReport,JSON.stringify({at:report.at,status:report.status,summary}));renderSyncReport();$('syncStatus').textContent=summary;const detail=Object.values(report.results).filter(x=>x.status==='failed').map(x=>x.message).join('／');showMsg(summary+(detail?'：'+detail:''),report.status!=='success');if(report.status!=='success')noteError(summary+(detail?'：'+detail:''));refresh();}
 });
 function bind(){
  $('shareApp').addEventListener('click',shareApp);
@@ -227,8 +250,13 @@ function bind(){
  $('closeDay').addEventListener('click',()=>$('dayDialog').close());$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
  $('navAdd').addEventListener('click',()=>openEvent());
  window.addEventListener?.('scroll',onScroll,{passive:true});window.addEventListener?.('resize',updateMonthTitle);
- $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);$('eventScope').addEventListener('change',scopeToggle);
+ $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);for(const id of ['startTime','endTime'])for(const ev of ['focus','click','input'])$(id).addEventListener(ev,timeTouched);$('eventScope').addEventListener('change',scopeToggle);
 
 }
-bind();syncInputs();if(!loadCached())loadDemo();renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
+bind();syncInputs();showLastError();if(!loadCached())loadDemo();
+// A still-valid saved sign-in refreshes the calendar right away, without any tap.
+if(restoreAuth())(async()=>{try{await bootstrap();saveAuth();await refresh();}catch(e){noteError(`自動更新に失敗：${e.message}`);}})();
+// While signed in, pick up the partner's changes without pressing anything: on returning to the app and every 5 minutes while it is open.
+function autoRefresh(){if(isSignedIn()&&state.protocol===3&&document.visibilityState!=='hidden')refresh();}
+document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')autoRefresh();});setInterval(autoRefresh,5*60*1000);renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();
