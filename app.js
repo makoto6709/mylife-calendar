@@ -63,8 +63,6 @@ async function fetchSharedStamp(){if(!/^https:\/\/script\.google\.com\/macros\/s
 function markSeen(stamp){if(stamp===null||stamp===undefined)return;try{localStorage.setItem(KEYS.sharedStamp,stamp);}catch{}$('updateBanner').classList.add('hidden');}
 async function checkSharedChanges(){if(state.mode!=='cloud'||isSignedIn())return;try{const stamp=await fetchSharedStamp();if(stamp&&stamp!==localStorage.getItem(KEYS.sharedStamp))$('updateBanner').classList.remove('hidden');}catch{}}
 function updateNow(){$('updateBanner').classList.add('hidden');connect();}
-// While the sign-in has expired, a 更新 button in the header reconnects with one tap (same account, no chooser).
-function updateRefreshBtn(){$('refreshBtn').classList.toggle('hidden',!(state.mode==='cloud'&&!isSignedIn()));}
 async function syncGoogleCalendars(){
  ensureCloud();await loadCalendarList();
  const scopes=await Promise.allSettled(['shared','private'].map(reconcileScope));
@@ -135,7 +133,7 @@ function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLo
 const LANES=5;
 function render(){buildIndex();const root=$('calendarGrid');root.replaceChildren();const todayKey=dateKey(new Date());
  for(let w=0;w<state.weekCount;w++)root.appendChild(renderWeek(keyAdd(state.weekStart,w*7),todayKey));
- updateMonthTitle();renderAlarmPreview();$('connectionPill').textContent=isSignedIn()?'Google接続中':state.mode==='cloud'?'保存済みの予定を表示中':'体験モード';updateRefreshBtn();$('navScopeLabel').textContent=state.filter==='shared'?'共有':'個人';
+ updateMonthTitle();renderAlarmPreview();$('connectionPill').textContent=isSignedIn()?'Google接続中':state.mode==='cloud'?'保存済みの予定を表示中':'体験モード';$('navScopeLabel').textContent=state.filter==='shared'?'共有':'個人';
 }
 /** One week row: 7 day cells behind, events laid out in up to 5 lanes; a multi-day event is one bar across its days. */
 function renderWeek(ws,todayKey){const row=document.createElement('div');row.className='week';row.dataset.week=ws;const days=Array.from({length:7},(_,i)=>keyAdd(ws,i));
@@ -259,7 +257,7 @@ function bind(){
  // The token lives in RAM only, so an iPhone reload signs out; pressing sync then reconnects first and syncs right after.
  $('settingsSyncAll').addEventListener('click',()=>isSignedIn()||!(config.clientId&&config.gatewayUrl)?syncRunner.run():connect(()=>syncRunner.run()));$('disconnectGoogle').addEventListener('click',disconnectGoogle);$('enableGoogle').addEventListener('click',enableGoogle);
  $('navSettings').addEventListener('click',openSettings);$('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
- $('loginBtn').addEventListener('click',()=>connect());$('updateNow').addEventListener('click',updateNow);$('refreshBtn').addEventListener('click',updateNow);
+ $('loginBtn').addEventListener('click',()=>connect());$('updateNow').addEventListener('click',updateNow);
  $('todayBtn').addEventListener('click',()=>{state.selected=dateKey(new Date());markSelected();scrollToDay(state.selected);});
  // Bottom menu: one button toggles 個人 ⇄ 共有.
  $('navScope').addEventListener('click',()=>{state.filter=state.filter==='shared'?'private':'shared';render();});
@@ -273,7 +271,8 @@ bind();syncInputs();showLastError();if(!loadCached())loadDemo();
 // A still-valid saved sign-in refreshes the calendar right away, without any tap.
 if(restoreAuth())(async()=>{try{await bootstrap();saveAuth();await refresh();}catch(e){noteError(`自動更新に失敗：${e.message}`);}})();
 // While signed in, pick up the partner's changes without pressing anything: on returning to the app and every 5 minutes while it is open.
-function autoRefresh(){if(document.visibilityState==='hidden')return;if(isSignedIn()&&state.protocol===3)refresh();else checkSharedChanges();updateRefreshBtn();}
+// Kept light: each check is one tiny GET for the change stamp; the sheets are read and the calendar redrawn only when it moved.
+async function autoRefresh(){if(document.visibilityState==='hidden')return;if(!(isSignedIn()&&state.protocol===3))return checkSharedChanges();try{const stamp=await fetchSharedStamp();if(stamp===null||stamp!==localStorage.getItem(KEYS.sharedStamp))refresh();}catch{refresh();}}
 checkSharedChanges();
 document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')autoRefresh();});setInterval(autoRefresh,5*60*1000);renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();
