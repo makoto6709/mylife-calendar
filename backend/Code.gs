@@ -149,7 +149,7 @@ function stageExternal_(token,c,email,id,list,input){
 }
 function syncShift_(token,c,email,list){
  if(!c.shiftSourceId)throw Error('勤務シフトの接続設定が未完了です。');
- let days;try{days=readShiftDays_(token,c.shiftSourceId);}catch(e){if(e.code===403)return {skipped:true,message:'このアカウントには勤務元の閲覧権限がありません。'};throw e;}
+ let days;try{days=readShiftDays_(token,c.shiftSourceId);}catch(e){if([403,404].includes(e.code))return {skipped:true,message:'このアカウントには勤務元の閲覧権限がありません。'};throw e;}
  const existing=new Map(),writes=[];
  for(const r of list.filter(r=>r.source==='shift')){const key=r.start.slice(0,10);if(existing.has(key))throw Error('既存勤務に重複があります。データを保持して停止しました。');existing.set(key,r);}
  let created=0,updated=0,deleted=0,unchanged=0;const now=new Date().toISOString();
