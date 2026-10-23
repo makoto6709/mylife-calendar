@@ -160,7 +160,8 @@ function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError
  if(e.kind==='shift'||e.origin==='google')$('eventScope').disabled=true;if(e.kind==='shift')$('syncGoogle').disabled=true;
  if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){$('editHint').classList.remove('hidden');$('editHint').textContent='この予定は読み取り専用です。変更は元のシステムで行ってください。';for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;$('saveEvent').classList.add('hidden');}
  else{$('deleteEvent').classList.remove('hidden');if(e.origin==='google'){$('editHint').classList.remove('hidden');$('editHint').textContent='既存のGoogle予定です。変更・削除は保存後、「すべて同期」を押したときに反映されます。';}}
- if(e.origin==='sheet')$('eventScope').disabled=true;
+ // Own events may switch 共有/非共有 (saved as a move between the two sheets); the partner's stay where they are.
+ if(e.origin==='sheet'&&!isMine(e))$('eventScope').disabled=true;
  }else{for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=false;}
  allDayToggle();if(e?.kind==='shift'||(e?.origin==='google'&&!e._canEdit)){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;}
  // Shift fields stay read-only; only the viewer's own memo is editable and it never reaches the partner or Google.
@@ -184,6 +185,13 @@ async function saveEvent(e){e.preventDefault();if(state.busy)return;
  const items=parseJson(KEYS.demo,[]);if(old){const idx=items.findIndex(x=>x.id===old.id);if(idx<0)throw Error('元の予定が見つかりません。');items[idx]={...items[idx],...draft,updatedAt:new Date().toISOString()};}else items.push({...draft,id:crypto.randomUUID(),owner:'demo',calendarId:'',googleEventId:'',source:'manual',deleted:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});localStorage.setItem(KEYS.demo,JSON.stringify(items));
  }else if(old?.origin==='google'){
  const result=await stageExternal(old,draft,false);$('eventDialog').close();upsertLocal(result.record,result.record.scope);showMsg('予定を保存しました。');return;
+ }else if(old&&old.scope!==draft.scope){
+ // 共有⇄非共有 lives in different sheets: save a copy in the new one, then delete the original.
+ const moved={...draft,id:crypto.randomUUID()};const snapshot=state.records.slice();
+ $('eventDialog').close();upsertLocal({...old,deleted:true},old._store||old.scope);upsertLocal({...moved,owner:state.email,source:'manual',revision:0,syncState:'saving',deleted:false},draft.scope);showMsg('保存しています…');
+ try{const result=await gateway('save',draft.scope,moved,0);upsertLocal(result.record,draft.scope);const gone=await gateway('delete',old.scope,old,old.revision||0);upsertLocal(gone.record,old._store||old.scope);showMsg(draft.scope==='shared'?'共有に変更しました。':'非共有に変更しました。');}
+ catch(err){state.records=snapshot;state.visible=mergeEvents();render();showMsg(`変更に失敗しました：${err.message}（画面を更新して確認してください）`,true);}
+ return;
  }else{
  // Show the event at once and close the dialog; the gateway round trip (a few seconds on Apps Script) finishes in the background.
  const r={...old,...draft,id:old?.id||($('eventId').value||crypto.randomUUID())};$('eventId').value=r.id;const snapshot=state.records.slice();
