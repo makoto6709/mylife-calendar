@@ -2,7 +2,7 @@
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
-const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1',syncReport:'mylife.calendar.syncReport.v1',cache:'mylife.calendar.cache.v1',auth:'mylife.calendar.auth.v1',lastError:'mylife.calendar.lastError.v1'};
+const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1',syncReport:'mylife.calendar.syncReport.v1',cache:'mylife.calendar.cache.v1',auth:'mylife.calendar.auth.v1',lastError:'mylife.calendar.lastError.v1',sharedStamp:'mylife.calendar.sharedStamp.v1'};
 const HEADERS=['id','owner','scope','title','start','end','allDay','notes','sync','calendarId','googleEventId','source','deleted','createdAt','updatedAt','location','revision','syncState','googleEtag','lastError'];
 const SCOPE='openid email https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.metadata.readonly';
 const TZ='Asia/Tokyo';
@@ -38,7 +38,10 @@ async function sheetRead(id,store){if(!id)return [];const data=await api(`${shee
 async function gateway(action,scope,record,expectedRevision=0){
  ensureCloud();if(action!=='bootstrap'&&state.protocol!==3)throw Error('同期サーバーの接続確認が必要です。');if(!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(config.gatewayUrl))throw Error('設定にGASのウェブアプリURLが必要です。');
  const res=await fetch(config.gatewayUrl,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:state.token,protocol:3,action,scope,record,expectedRevision}),redirect:'follow',signal:AbortSignal.timeout(90000)});
- if(!res.ok)throw Error('同期サーバーに接続できません。');const data=await res.json();if(!data.ok)throw Error(data.error||'同期サーバーでエラーが発生しました。');return data;
+ if(!res.ok)throw Error('同期サーバーに接続できません。');const data=await res.json();if(!data.ok)throw Error(data.error||'同期サーバーでエラーが発生しました。');
+ // My own change to the shared events is not news: remember its stamp so it does not later ask me to 更新.
+ if(scope==='shared'&&['save','delete','syncShift','stageExternal'].includes(action))fetchSharedStamp().then(markSeen).catch(()=>{});
+ return data;
 }
 async function reconcileScope(scope){let afterId='',failed=0;do{const r=await gateway('reconcile',scope,{afterId});failed+=r.failed||0;afterId=r.nextAfter||'';}while(afterId);if(failed)throw Error(`未同期または競合の予定が${failed}件あります。`);}
 async function bootstrap(){const data=await gateway('bootstrap');if(data.protocol!==3)throw Error('同期サーバーの更新が必要です。既存データは変更していません。');state.protocol=3;Object.assign(config,data.config);state.email=data.email;syncInputs();}
@@ -49,9 +52,17 @@ async function fetchCalendarEvents(cal,from,to){let next='';const out=[];do{cons
 async function loadCalendarList(){if(state.mode!=='cloud')return;let results=[];let next='';do{const p=new URLSearchParams({maxResults:'250'});if(next)p.set('pageToken',next);const r=await api(`https://www.googleapis.com/calendar/v3/users/me/calendarList?${p}`);results.push(...(r.items||[]));next=r.nextPageToken||'';}while(next);state.allCalendars=results;}
 function checkedCalendarIds(){const primary=state.allCalendars.find(c=>c.primary)?.id||'primary';const ids=new Set(config.visibleTouched?config.visibleCalendarIds:[primary]);for(const x of [config.sharedCalId,config.workCalId,config.privateCalId])if(x)ids.add(x);return ids;}
 async function loadCloud(){ensureCloud();saveConfig();if(!config.sharedSheetId||!config.privateSheetId)throw Error('初期設定が未完了です。');
+ // Ask for the change stamp before reading, so a change made while reading still counts as unseen.
+ const stamp=fetchSharedStamp().catch(()=>null);
  const [a,b]=await Promise.all([sheetRead(config.sharedSheetId,'shared'),sheetRead(config.privateSheetId,'private')]);
- state.records=[...a,...b];state.visible=mergeEvents();render();saveCache();
+ state.records=[...a,...b];state.visible=mergeEvents();render();saveCache();markSeen(await stamp);
 }
+// Signed out (the Google sign-in lasts about an hour), the app still asks the gateway — without any sign-in — only
+// WHEN the shared events last changed, and offers a one-tap 更新 when that is newer than what this phone shows.
+async function fetchSharedStamp(){if(!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(config.gatewayUrl))return null;const res=await fetch(config.gatewayUrl,{redirect:'follow',signal:AbortSignal.timeout(20000)});if(!res.ok)return null;const d=await res.json();return typeof d.sharedStamp==='string'?d.sharedStamp:null;}
+function markSeen(stamp){if(stamp===null||stamp===undefined)return;try{localStorage.setItem(KEYS.sharedStamp,stamp);}catch{}$('updateBanner').classList.add('hidden');}
+async function checkSharedChanges(){if(state.mode!=='cloud'||isSignedIn())return;try{const stamp=await fetchSharedStamp();if(stamp&&stamp!==localStorage.getItem(KEYS.sharedStamp))$('updateBanner').classList.remove('hidden');}catch{}}
+function updateNow(){$('updateBanner').classList.add('hidden');connect();}
 async function syncGoogleCalendars(){
  ensureCloud();await loadCalendarList();
  const scopes=await Promise.allSettled(['shared','private'].map(reconcileScope));
@@ -246,7 +257,7 @@ function bind(){
  // The token lives in RAM only, so an iPhone reload signs out; pressing sync then reconnects first and syncs right after.
  $('settingsSyncAll').addEventListener('click',()=>isSignedIn()||!(config.clientId&&config.gatewayUrl)?syncRunner.run():connect(()=>syncRunner.run()));$('disconnectGoogle').addEventListener('click',disconnectGoogle);$('enableGoogle').addEventListener('click',enableGoogle);
  $('navSettings').addEventListener('click',openSettings);$('closeSettings').addEventListener('click',()=>$('settingsDialog').close());
- $('loginBtn').addEventListener('click',()=>connect());
+ $('loginBtn').addEventListener('click',()=>connect());$('updateNow').addEventListener('click',updateNow);
  $('todayBtn').addEventListener('click',()=>{state.selected=dateKey(new Date());markSelected();scrollToDay(state.selected);});
  // Bottom menu: one button toggles 個人 ⇄ 共有.
  $('navScope').addEventListener('click',()=>{state.filter=state.filter==='shared'?'private':'shared';render();});
@@ -260,6 +271,8 @@ bind();syncInputs();showLastError();if(!loadCached())loadDemo();
 // A still-valid saved sign-in refreshes the calendar right away, without any tap.
 if(restoreAuth())(async()=>{try{await bootstrap();saveAuth();await refresh();}catch(e){noteError(`自動更新に失敗：${e.message}`);}})();
 // While signed in, pick up the partner's changes without pressing anything: on returning to the app and every 5 minutes while it is open.
-function autoRefresh(){if(isSignedIn()&&state.protocol===3&&document.visibilityState!=='hidden')refresh();}
+// Kept light: each check is one tiny GET for the change stamp; the sheets are read and the calendar redrawn only when it moved.
+async function autoRefresh(){if(document.visibilityState==='hidden')return;if(!(isSignedIn()&&state.protocol===3))return checkSharedChanges();try{const stamp=await fetchSharedStamp();if(stamp===null||stamp!==localStorage.getItem(KEYS.sharedStamp))refresh();}catch{refresh();}}
+checkSharedChanges();
 document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')autoRefresh();});setInterval(autoRefresh,5*60*1000);renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();

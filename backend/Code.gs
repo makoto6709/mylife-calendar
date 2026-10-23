@@ -4,7 +4,10 @@
  * Script properties: MYLIFE_CONFIG (see config.example.json).
  */
 const H=['id','owner','scope','title','start','end','allDay','notes','sync','calendarId','googleEventId','source','deleted','createdAt','updatedAt','location','revision','syncState','googleEtag','lastError'];
-function doGet(){return json_({ok:true,version:3,protocol:3});}
+/* GET needs no sign-in and returns only the time the shared DB last changed (no events, no names), so a phone
+ * whose sign-in expired can tell whether it is worth asking to update. */
+function doGet(){return json_({ok:true,version:3,protocol:3,sharedStamp:PropertiesService.getScriptProperties().getProperty('MYLIFE_SHARED_STAMP')||''});}
+function bumpShared_(id){try{if(id===cfg_().sharedSheetId)PropertiesService.getScriptProperties().setProperty('MYLIFE_SHARED_STAMP',new Date().toISOString());}catch(_){}}
 function json_(v){return ContentService.createTextOutput(JSON.stringify(v)).setMimeType(ContentService.MimeType.JSON);}
 function call_(token,url,method,body,etag){
  const headers={Authorization:'Bearer '+token};if(etag)headers['If-Match']=etag;
@@ -62,6 +65,7 @@ function writeMany_(token,id,records){
  const values=r=>H.map(k=>String(r[k]??'')),old=records.filter(r=>r._row),fresh=records.filter(r=>!r._row);
  if(old.length)call_(token,root_(id)+'/values:batchUpdate','post',{valueInputOption:'RAW',data:old.map(r=>({range:'events!A'+r._row+':T'+r._row,values:[values(r)]}))});
  if(fresh.length){const out=call_(token,root_(id)+'/values/events!A:T:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS','post',{values:fresh.map(values)});const first=+out.updates.updatedRange.match(/!A(\d+)/)[1];fresh.forEach((r,i)=>r._row=first+i);}
+ if(records.length)bumpShared_(id);
  return records;
 }
 function write_(token,id,r){return writeMany_(token,id,[r])[0];}
