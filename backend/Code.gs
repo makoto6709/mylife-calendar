@@ -155,12 +155,13 @@ function syncShift_(token,c,email,list){
  let created=0,updated=0,deleted=0,unchanged=0;const now=new Date().toISOString();
  days.forEach((shift,key)=>{
   const old=existing.get(key);
-  if(!shift){if(old&&!old.deleted){old.deleted=true;old.revision++;old.updatedAt=now;old.syncState=old.sync?'pending-delete':'local';writes.push(old);deleted++;}return;}
+  /* Shifts live only in the shared DB; they are never sent to Google Calendar. */
+  if(!shift){if(old&&!old.deleted){old.deleted=true;old.revision++;old.updatedAt=now;old.sync=false;old.syncState='local';writes.push(old);deleted++;}return;}
   /* Times erased after being set: keep the timed shift rather than downgrading it to 「時間未定」. */
   if(shift.allDay&&old&&!old.deleted&&!old.allDay){unchanged++;return;}
   if(old&&!old.deleted&&old.title===shift.title&&old.start===shift.start&&old.end===shift.end&&!!old.allDay===!!shift.allDay){unchanged++;return;}
-  const r={...old,id:old?.id||Utilities.getUuid(),owner:old?.owner||email,scope:'shared',source:'shift',title:shift.title,start:shift.start,end:shift.end,allDay:!!shift.allDay,location:'',notes:'',sync:true,calendarId:c.sharedCalId,googleEventId:old?.googleEventId||'',googleEtag:old?.googleEtag||'',deleted:false,createdAt:old?.createdAt||now,updatedAt:now,revision:(old?.revision||0)+1,lastError:''};
-  r.googleEventId=r.googleEventId||'ml'+r.id.replace(/-/g,'');r.syncState=old?.googleEtag?'pending-update':'pending-create';writes.push(r);old?updated++:created++;
+  const r={...old,id:old?.id||Utilities.getUuid(),owner:old?.owner||email,scope:'shared',source:'shift',title:shift.title,start:shift.start,end:shift.end,allDay:!!shift.allDay,location:'',notes:'',sync:false,calendarId:old?.calendarId||'',googleEventId:old?.googleEventId||'',googleEtag:old?.googleEtag||'',deleted:false,createdAt:old?.createdAt||now,updatedAt:now,revision:(old?.revision||0)+1,syncState:'local',lastError:''};
+  writes.push(r);old?updated++:created++;
  });
  writeMany_(token,c.sharedSheetId,writes);return {created,updated,deleted,unchanged};
 }
