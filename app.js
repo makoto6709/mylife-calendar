@@ -155,6 +155,8 @@ function clearEventForm(){for(const el of $('eventForm').querySelectorAll('input
 // Time fields stay tappable while 終日 is on (only dimmed); touching one turns 終日 off.
 function allDayToggle(){const on=$('allDay').checked;$('startTime').classList.toggle('dimmed',on);$('endTime').classList.toggle('dimmed',on);}
 function showSave(on){for(const id of ['saveEvent','saveEventTop'])$(id).classList.toggle('hidden',!on);}
+// Links in the memo: a textarea cannot open them, so list them as tappable links under it (http/https only).
+function renderNoteLinks(){const root=$('noteLinks');root.replaceChildren();const urls=[...new Set(($('eventNotes').value.match(/https?:\/\/[^\s<>"'「」（）]+/g)||[]).map(u=>u.replace(/[.,、。)!?]+$/,'')))].slice(0,5);for(const u of urls){const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener noreferrer';a.textContent=u;root.appendChild(a);}}
 function timeTouched(){if(!$('allDay').checked)return;$('allDay').checked=false;allDayToggle();}
 function scopeToggle(){$('scopeHelp').textContent=$('eventScope').value==='shared'?'共有予定は、2人が追加・編集・削除できます。':'非共有予定は本人専用Googleシートに保存され、相手には表示されません。';}
 function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError){$('resolveSync').classList.remove('hidden');$('editHint').classList.remove('hidden');$('editHint').textContent=e.lastError;}$('eventDialogTitle').textContent=e.kind==='shift'?'勤務シフト':e.origin==='google'?'Googleカレンダーの予定':'予定を編集';$('eventId').value=e.id;$('eventOrigin').value=e.origin;$('eventTitle').value=e.title;$('eventScope').value=e.scope==='private'?'private':'shared';$('startDate').value=inLocal(e.start);$('endDate').value=e.allDay?keyAdd(inLocal(e.end),-1):inLocal(e.end);$('startTime').value=timeLocal(e.start)||'10:00';$('endTime').value=timeLocal(e.end)||'11:00';$('allDay').checked=e.allDay;$('eventNotes').value=e.notes||'';$('eventLocation').value=e.location||'';$('syncGoogle').checked=!!e.sync;
@@ -167,7 +169,7 @@ function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError
  allDayToggle();if(e?.kind==='shift'||(e?.origin==='google'&&!e._canEdit)){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;}
  // Shift fields stay read-only; only the viewer's own memo is editable and it never reaches the partner or Google.
  if(e?.kind==='shift'&&state.mode==='cloud'){$('notesField').classList.remove('hidden');$('eventNotesLabel').textContent='自分だけのメモ';$('eventNotes').value=e._memo||'';$('eventNotes').disabled=false;showSave(true);if(!e.lastError)$('editHint').textContent='勤務は辻岡シフトから自動で取り込みます（編集不可）。メモは自分だけに表示され、相手やGoogleカレンダーには送られません。';}
- scopeToggle();showDialog($('eventDialog'));}
+ scopeToggle();renderNoteLinks();showDialog($('eventDialog'));}
 async function saveShiftMemo(){const e=state.editing;setBusy(true);
  try{const result=await gateway('saveShiftMemo','private',{id:e.id,notes:$('eventNotes').value.trim()},e._memoRev||0);$('eventDialog').close();upsertLocal(result.record,'private');showMsg('勤務メモを保存しました（自分だけに表示）。');}
  catch(err){showMsg(`保存に失敗しました：${err.message}`,true);}finally{setBusy(false);}}
@@ -251,7 +253,7 @@ function bind(){
  $('closeDay').addEventListener('click',()=>$('dayDialog').close());$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
  $('navAdd').addEventListener('click',()=>openEvent());
  window.addEventListener?.('scroll',onScroll,{passive:true});window.addEventListener?.('resize',updateMonthTitle);
- $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);for(const id of ['startTime','endTime'])for(const ev of ['focus','click','input'])$(id).addEventListener(ev,timeTouched);$('eventScope').addEventListener('change',scopeToggle);
+ $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);for(const id of ['startTime','endTime'])for(const ev of ['focus','click','input'])$(id).addEventListener(ev,timeTouched);$('eventScope').addEventListener('change',scopeToggle);$('eventNotes').addEventListener('input',renderNoteLinks);
 
 }
 bind();syncInputs();showLastError();if(!loadCached())loadDemo();
