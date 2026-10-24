@@ -18,7 +18,7 @@ test('a saved 非共有 event can be changed to 共有 (copied to the shared she
  const fetch=async(url,init)=>{if(!String(url).startsWith('https://script.google.com/'))return{ok:false,json:async()=>({})};const b=JSON.parse(init.body);calls.push(b);const ok=d=>({ok:true,json:async()=>({ok:true,...d})});if(b.action==='bootstrap')return ok({protocol:3,email:'me@test',config:{sharedSheetId:'s',privateSheetId:'p'}});return ok({record:{...b.record,revision:(b.expectedRevision||0)+1,deleted:b.action==='delete'}});};
  const a=setup({clientId:'c.apps.googleusercontent.com',gatewayUrl:'https://script.google.com/macros/s/x/exec',fetch,auth:{token:'t',expiresAt:Date.now()+3600000,email:'me@test'},cache:{email:'me@test',at:'2026-10-22T00:00:00Z',records:[rec]}});
  for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));
- cells(a).find(c=>c.dataset.day==='2026-10-29').handlers.click();a.elements.get('dayDialogEvents').children[0].handlers.click();
+ cells(a).find(c=>c.dataset.day==='2026-10-29').handlers.click();a.elements.get('dayDialogEvents').children[0].children[1].handlers.click();
  assert.equal(a.elements.get('eventScope').disabled,false,'own event: 共有/非共有 can be changed');a.elements.get('eventScope').value='shared';
  await a.elements.get('eventForm').handlers.submit({preventDefault(){}});
  const save=calls.find(c=>c.action==='save'),del=calls.find(c=>c.action==='delete');
@@ -49,3 +49,12 @@ test('signed in: the 5-minute check reads the sheets and redraws only when the s
  a.ticks[0]();await settle();assert.equal(reads,2,'nothing changed: no sheet reads');
  stamp='s3';a.ticks[0]();await settle();assert.equal(reads,4,'shared change: one reload');
  a.ticks[0]();await settle();assert.equal(reads,4,'and quiet again afterwards');});
+
+test('day popup: swipe a card left to show 削除, one tap deletes; a swipe is not a tap and a vertical drag does nothing',async()=>{const a=setup();await addDemo(a,{title:'歯医者',start:'2026-10-29',allDay:true});
+ const open=()=>{cells(a).find(c=>c.dataset.day==='2026-10-29').handlers.click();const row=a.elements.get('dayDialogEvents').children[0];return{row,del:row.children[0],card:row.children[1]};};
+ let {row,del,card}=open();assert.equal(row.className,'swipeRow');assert.equal(del.textContent,'削除');
+ card.handlers.pointerdown({clientX:200,clientY:10});card.handlers.pointermove({clientX:205,clientY:90});card.handlers.pointerup({});assert.equal(row.classList.contains('open'),false,'vertical drag scrolls, no 削除');
+ card.handlers.pointerdown({clientX:200,clientY:10});card.handlers.pointermove({clientX:110,clientY:14});card.handlers.pointerup({});assert.equal(row.classList.contains('open'),true,'left swipe shows 削除');
+ card.handlers.click();assert.equal(a.elements.get('eventDialog').open,false,'the swipe does not open the event');
+ del.handlers.click();for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));
+ assert.ok(!String(a.storage.get('mylife.calendar.demo.v1')).includes('歯医者'),'event deleted');assert.equal(a.elements.get('dayDialogEvents').children.length,0);assert.match(a.elements.get('dayDialogEvents').innerHTML,/この日の予定はありません/);});
