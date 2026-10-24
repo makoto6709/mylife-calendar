@@ -125,9 +125,22 @@ function eventCard(e,showDay,onOpen){const btn=document.createElement('button');
 const dayLabel=key=>{const d=new Date(`${key}T12:00:00`);return `${d.getMonth()+1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`;};
 /** Tapping a date pops up that day's events (current 個人/共有 filter), with add and previous/next day. */
 function markSelected(){for(const row of $('calendarGrid').children)for(const c of row.children||[])if(c.dataset?.day)c.className=c.className.replace(/ selected/g,'')+(c.dataset.day===state.selected?' selected':'');}
+/** Drag a day-popup card left to uncover its 削除 button. Returns a check the card's tap uses: a swipe, or a tap that only closes an open row, does not open the event. */
+function swipeToDelete(row,card){const W=84;let x0=null,y0=0,dx=0,moved=false,skipTap=false;
+ card.addEventListener('pointerdown',ev=>{x0=ev.clientX;y0=ev.clientY;dx=row.classList.contains('open')?-W:0;moved=false;card.style.transition='none';});
+ card.addEventListener('pointermove',ev=>{if(x0===null)return;const mx=ev.clientX-x0,my=ev.clientY-y0;if(!moved){if(Math.abs(mx)<8&&Math.abs(my)<8)return;if(Math.abs(my)>Math.abs(mx)){x0=null;card.style.transition='';return;}moved=true;}dx=Math.min(0,Math.max(-W,(row.classList.contains('open')?-W:0)+mx));card.style.transform=`translateX(${dx}px)`;});
+ const end=()=>{if(x0===null)return;x0=null;card.style.transition='';card.style.transform='';if(moved){row.classList.toggle('open',dx<-W/2);skipTap=true;}else if(row.classList.contains('open')){row.classList.remove('open');skipTap=true;}};
+ card.addEventListener('pointerup',end);card.addEventListener('pointercancel',end);
+ return()=>{const s=skipTap;skipTap=false;return s;};}
 function openDay(key){state.selected=key;markSelected();
  $('dayDialogTitle').textContent=dayLabel(key)+'の予定';const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key);
- if(!list.length)root.innerHTML='<div class="empty">この日の予定はありません。</div>';else for(const e of list)root.appendChild(eventCard(e,false,x=>{$('dayDialog').close();openEvent(x);}));
+ if(!list.length)root.innerHTML='<div class="empty">この日の予定はありません。</div>';else for(const e of list){let swiped=()=>false;const card=eventCard(e,false,x=>{if(swiped())return;$('dayDialog').close();openEvent(x);});
+  if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){root.appendChild(card);continue;}
+  const row=document.createElement('div');row.className='swipeRow';const del=document.createElement('button');del.type='button';del.className='swipeDelete';del.textContent='削除';
+  swiped=swipeToDelete(row,card);
+  // The swipe is the confirmation: one tap on 削除 deletes, and the list redraws at once.
+  del.addEventListener('click',()=>{state.editing=e;const done=removeEvent(null,true);openDay(key);done.then(()=>{if($('dayDialog').open)openDay(key);});});
+  row.append(del,card);root.appendChild(row);}
  showDialog($('dayDialog'));}
 function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLocal(e.end)}`;}
 const LANES=5;
