@@ -144,7 +144,9 @@ function openDay(key){state.selected=key;markSelected();
  showDialog($('dayDialog'));}
 function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLocal(e.end)}`;}
 const LANES=5;
-function render(){buildIndex();const root=$('calendarGrid');root.replaceChildren();const todayKey=dateKey(new Date());
+// A shared-only account (set on the gateway) always sees 共有 and has no 個人/共有 switch.
+function sharedOnly(){return state.mode==='cloud'&&!!config.sharedOnly;}
+function render(){if(sharedOnly())state.filter='shared';$('navScope').classList.toggle('hidden',sharedOnly());buildIndex();const root=$('calendarGrid');root.replaceChildren();const todayKey=dateKey(new Date());
  for(let w=0;w<state.weekCount;w++)root.appendChild(renderWeek(keyAdd(state.weekStart,w*7),todayKey));
  updateMonthTitle();renderAlarmPreview();$('connectionPill').textContent=isSignedIn()?'Google接続中':state.mode==='cloud'?'保存済みの予定を表示中':'体験モード';$('navScopeLabel').textContent=state.filter==='shared'?'共有':'個人';
 }
@@ -192,7 +194,9 @@ function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError
  }else{for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=false;}
  allDayToggle();if(e?.kind==='shift'||(e?.origin==='google'&&!e._canEdit)){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;}
  // Shift fields stay read-only; only the viewer's own memo is editable and it never reaches the partner or Google.
- if(e?.kind==='shift'&&state.mode==='cloud'){$('notesField').classList.remove('hidden');$('eventNotesLabel').textContent='自分だけのメモ';$('eventNotes').value=e._memo||'';$('eventNotes').disabled=false;showSave(true);if(!e.lastError)$('editHint').textContent='勤務は辻岡シフトから自動で取り込みます（編集不可）。メモは自分だけに表示され、相手やGoogleカレンダーには送られません。';}
+ // Shared-only: new events are always 共有, the choice is hidden, and the private shift memo is not offered.
+ $('scopeField').classList.toggle('hidden',sharedOnly());if(sharedOnly()&&!e)$('eventScope').value='shared';
+ if(e?.kind==='shift'&&state.mode==='cloud'&&!sharedOnly()){$('notesField').classList.remove('hidden');$('eventNotesLabel').textContent='自分だけのメモ';$('eventNotes').value=e._memo||'';$('eventNotes').disabled=false;showSave(true);if(!e.lastError)$('editHint').textContent='勤務は辻岡シフトから自動で取り込みます（編集不可）。メモは自分だけに表示され、相手やGoogleカレンダーには送られません。';}
  scopeToggle();renderNoteLinks();showDialog($('eventDialog'));}
 async function saveShiftMemo(){const e=state.editing;setBusy(true);
  try{const result=await gateway('saveShiftMemo','private',{id:e.id,notes:$('eventNotes').value.trim()},e._memoRev||0);$('eventDialog').close();upsertLocal(result.record,'private');showMsg('勤務メモを保存しました（自分だけに表示）。');}
