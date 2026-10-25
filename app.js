@@ -2,14 +2,14 @@
 (() => {
 'use strict';
 const $ = id => document.getElementById(id);
-const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1',syncReport:'mylife.calendar.syncReport.v1',cache:'mylife.calendar.cache.v1',auth:'mylife.calendar.auth.v1',lastError:'mylife.calendar.lastError.v1',sharedStamp:'mylife.calendar.sharedStamp.v1'};
+const KEYS = {config:'mylife.calendar.config.v1',demo:'mylife.calendar.demo.v1',syncReport:'mylife.calendar.syncReport.v1',cache:'mylife.calendar.cache.v1',auth:'mylife.calendar.auth.v1',lastError:'mylife.calendar.lastError.v1',sharedStamp:'mylife.calendar.sharedStamp.v1',weather:'mylife.calendar.weather.v1'};
 const HEADERS=['id','owner','scope','title','start','end','allDay','notes','sync','calendarId','googleEventId','source','deleted','createdAt','updatedAt','location','revision','syncState','googleEtag','lastError'];
 const SCOPE='openid email https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.metadata.readonly';
 const TZ='Asia/Tokyo';
 const defaults={gatewayUrl:window.MYLIFE_DEPLOYMENT?.gatewayUrl||'',clientId:window.MYLIFE_DEPLOYMENT?.clientId||'',sharedSheetId:'',privateSheetId:'',sharedCalId:'',privateCalId:'',workCalId:'',visibleCalendarIds:[],visibleTouched:false,googleCalendarEnabled:true};
 const parseJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))||fallback;}catch{return fallback;}};
 let config={...defaults,...parseJson(KEYS.config,{})};for(const k of ['clientId','gatewayUrl'])if(window.MYLIFE_DEPLOYMENT?.[k])config[k]=window.MYLIFE_DEPLOYMENT[k];
-const {dateKey,keyAdd,makeLocalISO,timeLocal,workTravel,alarmTimes}=MyLifeCore;
+const {dateKey,keyAdd,makeLocalISO,timeLocal,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel}=MyLifeCore;
 const today=new Date(dateKey()+'T12:00:00+09:00');const state={month:new Date(today.getFullYear(),today.getMonth(),1),selected:dateKey(today),filter:'private',token:'',email:'',mode:'demo',records:[],external:[],visible:[],allCalendars:[],fetchedCalIds:new Set(),busy:false,editing:null,expiresAt:0,weekStart:'',weekCount:78,index:new Map()};
 // The calendar is one continuous list of weeks starting on Monday; start three months back and extend on scroll.
 state.weekStart=(k=>keyAdd(k,-((new Date(k+'T12:00:00+09:00').getUTCDay()+6)%7)))(dateKey(new Date(today.getFullYear(),today.getMonth()-3,1)));
@@ -133,7 +133,7 @@ function swipeToDelete(row,card){const W=84;let x0=null,y0=0,dx=0,moved=false,sk
  card.addEventListener('pointerup',end);card.addEventListener('pointercancel',end);
  return()=>{const s=skipTap;skipTap=false;return s;};}
 function openDay(key){state.selected=key;markSelected();
- $('dayDialogTitle').textContent=dayLabel(key)+'の予定';const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key);
+ $('dayDialogTitle').textContent=dayLabel(key)+'の予定';$('dayWeather').textContent=weatherText(key);const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key);
  if(!list.length)root.innerHTML='<div class="empty">この日の予定はありません。</div>';else for(const e of list){let swiped=()=>false;const card=eventCard(e,false,x=>{if(swiped())return;$('dayDialog').close();openEvent(x);});
   if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){root.appendChild(card);continue;}
   const row=document.createElement('div');row.className='swipeRow';const del=document.createElement('button');del.type='button';del.className='swipeDelete';del.textContent='削除';
@@ -144,6 +144,11 @@ function openDay(key){state.selected=key;markSelected();
  showDialog($('dayDialog'));}
 function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLocal(e.end)}`;}
 const LANES=5;
+// Weather (気象庁, 茨城県北部 / 水戸): one ~3KB request at most every 3 hours, kept on the phone; drawing it is a lookup per day cell.
+const WEATHER_URL='https://www.jma.go.jp/bosai/forecast/data/forecast/080000.json',WEATHER_TTL=3*3600*1000;
+let weather=parseJson(KEYS.weather,{}).days||{};
+async function updateWeather(){const c=parseJson(KEYS.weather,null);if(c?.at&&Date.now()-c.at<WEATHER_TTL)return;try{const res=await fetch(WEATHER_URL,{signal:AbortSignal.timeout(15000)});if(!res.ok)return;const days=parseJmaForecast(await res.json());if(!Object.keys(days).length)return;weather=days;try{localStorage.setItem(KEYS.weather,JSON.stringify({at:Date.now(),days}));}catch{}render();}catch{}}
+function weatherText(k){const w=k>=dateKey(new Date())?weather[k]:null;if(!w?.code)return '';return `${weatherIcon(w.code)} ${weatherLabel(w.code)}${w.max!=null?` ${w.max}°`:''}${w.min!=null?`／${w.min}°`:''}${w.pop!=null?`　降水${w.pop}%`:''}`;}
 // A shared-only account (set on the gateway) always sees 共有 and has no 個人/共有 switch.
 function sharedOnly(){return state.mode==='cloud'&&!!config.sharedOnly;}
 function render(){if(sharedOnly())state.filter='shared';$('navScope').classList.toggle('hidden',sharedOnly());buildIndex();const root=$('calendarGrid');root.replaceChildren();const todayKey=dateKey(new Date());
@@ -153,7 +158,7 @@ function render(){if(sharedOnly())state.filter='shared';$('navScope').classList.
 /** One week row: 7 day cells behind, events laid out in up to 5 lanes; a multi-day event is one bar across its days. */
 function renderWeek(ws,todayKey){const row=document.createElement('div');row.className='week';row.dataset.week=ws;const days=Array.from({length:7},(_,i)=>keyAdd(ws,i));
  const monthEnd=days.find(k=>keyAdd(k,1).slice(8)==='01');if(monthEnd)row.dataset.monthEnd=monthEnd.slice(0,7);
- days.forEach((k,i)=>{const mon=+k.slice(5,7);const cell=document.createElement('div');cell.className=`day m${mon%2}${k===todayKey?' today':''}${k===state.selected?' selected':''}`;cell.dataset.day=k;cell.style.gridColumn=String(i+1);const num=document.createElement('span');num.className='daynum';num.textContent=k.slice(8)==='01'?`${mon}/1`:String(+k.slice(8));cell.appendChild(num);cell.addEventListener('click',()=>openDay(k));row.appendChild(cell);});
+ days.forEach((k,i)=>{const mon=+k.slice(5,7);const cell=document.createElement('div');cell.className=`day m${mon%2}${k===todayKey?' today':''}${k===state.selected?' selected':''}`;cell.dataset.day=k;cell.style.gridColumn=String(i+1);const num=document.createElement('span');num.className='daynum';num.textContent=k.slice(8)==='01'?`${mon}/1`:String(+k.slice(8));cell.appendChild(num);const wx=k>=todayKey?weather[k]:null;if(wx?.code){const s=document.createElement('span');s.className='wx';s.textContent=weatherIcon(wx.code);s.title=weatherText(k);cell.appendChild(s);}cell.addEventListener('click',()=>openDay(k));row.appendChild(cell);});
  const seen=new Set(),evs=[];for(const k of days)for(const e of eventsForDay(k))if(!seen.has(e)){seen.add(e);evs.push(e);}
  const span=e=>{const c=e._days.map(k=>days.indexOf(k)).filter(i=>i>=0);return [Math.min(...c),Math.max(...c)];};
  evs.sort((a,b)=>{const[as,ae]=span(a),[bs,be]=span(b);return (b.scope==='shared')-(a.scope==='shared')||(be-bs)-(ae-as)||as-bs||String(a.start).localeCompare(String(b.start));});/* 共有 first, then longer bars */
@@ -289,7 +294,7 @@ bind();syncInputs();showLastError();if(!loadCached())loadDemo();
 if(restoreAuth())(async()=>{try{await bootstrap();saveAuth();await refresh();}catch(e){noteError(`自動更新に失敗：${e.message}`);}})();
 // While signed in, pick up the partner's changes without pressing anything: on returning to the app and every 5 minutes while it is open.
 // Kept light: each check is one tiny GET for the change stamp; the sheets are read and the calendar redrawn only when it moved.
-async function autoRefresh(){if(document.visibilityState==='hidden')return;if(!(isSignedIn()&&state.protocol===3))return checkSharedChanges();try{const stamp=await fetchSharedStamp();if(stamp===null||stamp!==localStorage.getItem(KEYS.sharedStamp))refresh();}catch{refresh();}}
-checkSharedChanges();
+async function autoRefresh(){if(document.visibilityState==='hidden')return;updateWeather();if(!(isSignedIn()&&state.protocol===3))return checkSharedChanges();try{const stamp=await fetchSharedStamp();if(stamp===null||stamp!==localStorage.getItem(KEYS.sharedStamp))refresh();}catch{refresh();}}
+checkSharedChanges();updateWeather();
 document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')autoRefresh();});setInterval(autoRefresh,5*60*1000);renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();
