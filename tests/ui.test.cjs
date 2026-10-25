@@ -33,7 +33,7 @@ test('the event form is a bottom sheet with a light backdrop so the calendar sta
 
 test('signed out: 更新 popup only when the shared events changed',async()=>{
  const cache={email:'me@test',at:'2026-10-22T00:00:00Z',records:[]};
- const run=async seen=>{const gets=[];const fetch=async(url,init)=>{if(!init?.body){gets.push(url);return{ok:true,json:async()=>({ok:true,protocol:3,sharedStamp:'s2'})};}throw Error('no POST expected');};
+ const run=async seen=>{const gets=[];const fetch=async(url,init)=>{if(!init?.body){if(String(url).startsWith('https://script.google.com/'))gets.push(url);return{ok:true,json:async()=>({ok:true,protocol:3,sharedStamp:'s2'})};}throw Error('no POST expected');};
   const a=setup({clientId:'c.apps.googleusercontent.com',gatewayUrl:'https://script.google.com/macros/s/x/exec',cache,fetch,seen});for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));return{a,gets};};
  const changed=await run('s1');assert.equal(changed.gets.length,1,'one sign-in-free GET, no POST');assert.equal(changed.a.elements.get('updateBanner').classList.contains('hidden'),false,'popup shown for a newer stamp');
  assert.equal(changed.a.elements.has('refreshBtn'),false,'no standing 更新 button');
@@ -67,3 +67,13 @@ test('shared-only account: calendar always shows 共有, no 個人/共有 switch
  a.elements.get('navAdd').handlers.click();assert.equal(a.elements.get('scopeField').classList.contains('hidden'),true,'scope choice hidden');assert.equal(a.elements.get('eventScope').value,'shared');
  const normal=setup({clientId:'c.apps.googleusercontent.com',gatewayUrl:'https://script.google.com/macros/s/x/exec',cache:{email:'partner@test',at:'2026-10-22T00:00:00Z',records:[row]}});
  assert.equal(normal.elements.get('navScope').classList.contains('hidden'),false,'other accounts keep the switch');normal.elements.get('navAdd').handlers.click();assert.equal(normal.elements.get('scopeField').classList.contains('hidden'),false);assert.equal(normal.elements.get('eventScope').value,'private','default unchanged');});
+
+test('weather: one JMA request, marks on today and later days, details in the day popup, and no refetch within 3 hours',async()=>{
+ const k=n=>{const d=new Date(Date.now()+9*3600000+n*86400000);return d.toISOString().slice(0,10);};
+ const jma=[{timeSeries:[{timeDefines:[k(0)+'T05:00:00+09:00',k(1)+'T00:00:00+09:00'],areas:[{area:{code:'080010'},weatherCodes:['101','313']}]},{timeDefines:[],areas:[]},{timeDefines:[],areas:[]}]},{timeSeries:[{timeDefines:[k(-1)+'T00:00:00+09:00',k(2)+'T00:00:00+09:00'],areas:[{area:{code:'080000'},weatherCodes:['201','202'],pops:['','40']}]},{timeDefines:[k(2)+'T00:00:00+09:00'],areas:[{area:{code:'40201'},tempsMin:['9'],tempsMax:['18']}]}]}];
+ let calls=0;const fetch=async url=>{if(String(url).includes('jma.go.jp')){calls++;return{ok:true,json:async()=>jma};}throw Error('offline');};
+ const a=setup({fetch});for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));assert.equal(calls,1);
+ const wx=key=>{const c=cells(a).find(c=>c.dataset.day===key);return (c?.children||[]).filter(x=>x.className==='wx').map(x=>x.textContent).join('');};
+ assert.equal(wx(k(0)),'☀️');assert.equal(wx(k(1)),'☔');assert.equal(wx(k(2)),'☁️');assert.equal(wx(k(-1)),'','no mark on past days');
+ cells(a).find(c=>c.dataset.day===k(2)).handlers.click();assert.match(a.elements.get('dayWeather').textContent,/☁️ くもり 18°／9°　降水40%/);
+ a.ticks[0]();for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));assert.equal(calls,1,'cached for 3 hours');assert.ok(JSON.parse(a.storage.get('mylife.calendar.weather.v1')).days[k(2)],'saved on the phone');});
