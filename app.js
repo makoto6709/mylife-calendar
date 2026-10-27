@@ -22,7 +22,7 @@ function inLocal(iso){if(!iso)return '';return /^\d{4}-\d{2}-\d{2}$/.test(iso)?i
 function showMsg(msg,error=false){const el=$('message');if(!error){el.classList.add('hidden');return;}el.textContent=msg;el.classList.toggle('error',error);el.classList.remove('hidden');clearTimeout(showMsg.t);showMsg.t=setTimeout(()=>el.classList.add('hidden'),7000);}
 function saveConfig(){for(const k of Object.keys(defaults)){if($(k))config[k]=$(k).value.trim();}localStorage.setItem(KEYS.config,JSON.stringify(config));}
 function syncInputs(){for(const k of Object.keys(defaults)){if($(k))$(k).value=config[k]||'';} const signedIn=isSignedIn();$('loggedEmail').textContent=signedIn?`ログイン中：${state.email}（MyLifeの予定保存・勤務取得に使用）`:'未ログイン';$('calendarLink').textContent='MyLifeの予定はGoogleカレンダーには送りません。同期は勤務シフトの取り込みだけです。';$('loginBtn').classList.toggle('hidden',signedIn);$('disconnectGoogle').classList.add('hidden');$('enableGoogle').classList.add('hidden');}
-function setBusy(b){state.busy=b;$('saveEvent').disabled=b;$('deleteEvent').disabled=b;for(const id of ['settingsSyncAll'])$(id).disabled=b||!!syncRunner?.busy;}
+function setBusy(b){state.busy=b;$('saveEvent').disabled=b;$('saveEventTop').disabled=b;$('deleteEvent').disabled=b;for(const id of ['settingsSyncAll'])$(id).disabled=b||!!syncRunner?.busy;}
 function ensureCloud(){if(state.mode!=='cloud'||!state.token||Date.now()>=state.expiresAt)throw Error('Googleで接続してください。');}
 async function api(url,init={}){
  ensureCloud();const res=await fetch(url,{...init,headers:{'Authorization':`Bearer ${state.token}`,...(init.body?{'Content-Type':'application/json'}:{}),...(init.headers||{})}});
@@ -182,7 +182,7 @@ function onScroll(){if(onScroll.pending)return;onScroll.pending=true;(window.req
 function getTomorrowShift(){const tomorrow=keyAdd(dateKey(new Date()),1);return state.visible.filter(e=>e.kind==='shift'&&inLocal(e.start)===tomorrow&&!e.allDay).sort((a,b)=>a.start.localeCompare(b.start))[0];}
 function renderAlarmPreview(){const shift=getTomorrowShift(),root=$('alarmPreview');if(!shift){root.innerHTML='<div class="alarmNote">明日の勤務シフトはありません（または未取得です）。<br>アラームはiPhoneショートカットが21時に確認します。</div>';return;}const times=alarmTimes(shift);root.innerHTML=`<div class="alarmNote">${safe(shift.title)} · ${safe(timeLocal(shift.start))}開始</div><div class="alarmTime">${times?times.join(' / '):'勤務先の移動時間が未設定'}</div><div class="alarmNote">${times?'朝の準備40分＋通勤時間で計算':'勤務先名と通勤時間の対応をご確認ください。'}<br>※ここでの表示は確認用。実際のアラーム作成はショートカットが行います。</div>`;}
 function showDialog(el){if(!el.open)el.showModal();}
-function clearEventForm(){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=false;state.editing=null;$('eventForm').reset();$('resolveSync').classList.add('hidden');$('eventId').value='';$('eventOrigin').value='';$('eventScope').disabled=false;$('syncGoogle').disabled=false;$('eventDialogTitle').textContent='予定を追加';$('eventNotesLabel').textContent='メモ';$('deleteEvent').classList.add('hidden');$('editHint').classList.add('hidden');showSave(true);$('startDate').value=state.selected;$('endDate').value=state.selected;$('startTime').value='10:00';$('endTime').value='11:00';$('eventScope').value='private';$('allDay').checked=true;$('syncGoogle').checked=false;$('locationField').classList.add('hidden');$('notesField').classList.remove('hidden');allDayToggle();scopeToggle();}
+function clearEventForm(){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=false;state.editing=null;$('eventForm').reset();$('resolveSync').classList.add('hidden');$('eventId').value='';$('eventOrigin').value='';$('eventScope').disabled=false;$('syncGoogle').disabled=false;$('eventDialogTitle').textContent='予定を追加';$('eventNotesLabel').textContent='メモ';$('deleteEvent').classList.add('hidden');$('editHint').classList.add('hidden');showSave(true);$('startDate').value=state.selected;$('endDate').value=state.selected;$('startTime').value='10:00';$('endTime').value='11:00';$('eventScope').value='private';$('allDay').checked=true;$('syncGoogle').checked=false;$('locationField').classList.add('hidden');$('notesField').classList.remove('hidden');resetBulk();allDayToggle();scopeToggle();}
 // Time fields stay tappable while 終日 is on (only dimmed); touching one turns 終日 off.
 function allDayToggle(){const on=$('allDay').checked;$('startTime').classList.toggle('dimmed',on);$('endTime').classList.toggle('dimmed',on);}
 function showSave(on){for(const id of ['saveEvent','saveEventTop'])$(id).classList.toggle('hidden',!on);}
@@ -200,12 +200,58 @@ function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError
  allDayToggle();if(e?.kind==='shift'||(e?.origin==='google'&&!e._canEdit)){for(const el of $('eventForm').querySelectorAll('input,textarea,select'))el.disabled=true;}
  // Shift fields stay read-only; only the viewer's own memo is editable and it never reaches the partner or Google.
  // Shared-only: new events are always 共有, the choice is hidden, and the private shift memo is not offered.
- $('scopeField').classList.toggle('hidden',sharedOnly());if(sharedOnly()&&!e)$('eventScope').value='shared';
+ $('bulkControls').classList.toggle('hidden',!!e);$('scopeField').classList.toggle('hidden',sharedOnly());if(sharedOnly()&&!e)$('eventScope').value='shared';
  if(e?.kind==='shift'&&state.mode==='cloud'&&!sharedOnly()){$('notesField').classList.remove('hidden');$('eventNotesLabel').textContent='自分だけのメモ';$('eventNotes').value=e._memo||'';$('eventNotes').disabled=false;showSave(true);if(!e.lastError)$('editHint').textContent='勤務は辻岡シフトから自動で取り込みます（編集不可）。メモは自分だけに表示され、相手やGoogleカレンダーには送られません。';}
  scopeToggle();renderNoteLinks();showDialog($('eventDialog'));}
 async function saveShiftMemo(){const e=state.editing;setBusy(true);
  try{const result=await gateway('saveShiftMemo','private',{id:e.id,notes:$('eventNotes').value.trim()},e._memoRev||0);$('eventDialog').close();upsertLocal(result.record,'private');showMsg('勤務メモを保存しました（自分だけに表示）。');}
  catch(err){showMsg(`保存に失敗しました：${err.message}`,true);}finally{setBusy(false);}}
+let bulkDays=new Set(),bulkJobs=new Map();
+function resetBulk(){bulkDays=new Set();bulkJobs=new Map();$('bulkMode').checked=false;$('bulkMonth').value=state.selected.slice(0,7);$('bulkStatus').textContent='';$('bulkControls').classList.remove('hidden');bulkToggle();}
+function bulkToggle(){const on=$('bulkMode').checked&&!state.editing;$('bulkPanel').classList.toggle('hidden',!on);$('singleDateFields').classList.toggle('hidden',on);if(on){$('allDay').checked=true;if(!$('eventTitle').value.trim())$('eventTitle').value='休日';}renderBulkDates();}
+function renderBulkDates(){
+ const root=$('bulkDates');root.replaceChildren();const month=$('bulkMonth').value;
+ if(/^\d{4}-(0[1-9]|1[0-2])$/.test(month)){
+ const first=month+'-01',offset=(new Date(first+'T12:00:00+09:00').getUTCDay()+6)%7;
+ for(let n=0;n<offset;n++)root.appendChild(document.createElement('span'));
+ for(let day=first;day.slice(0,7)===month;day=keyAdd(day,1)){
+ const date=day,button=document.createElement('button');button.type='button';button.textContent=String(+date.slice(8));button.dataset.date=date;button.setAttribute('aria-label',date.replaceAll('-','/'));button.setAttribute('aria-pressed',String(bulkDays.has(date)));button.classList.toggle('selected',bulkDays.has(date));
+ button.addEventListener('click',()=>{if(state.busy)return;if(bulkDays.has(date))bulkDays.delete(date);else bulkDays.add(date);renderBulkDates();});root.appendChild(button);
+ }}
+ const dates=[...bulkDays].sort();$('bulkSelection').textContent=dates.length?dates.length+'日選択：'+dates.map(d=>d.slice(5).replace('-','/')).join('、'):'まだ日付を選んでいません';
+ const label=$('bulkMode').checked?dates.length+'日分を保存':'保存する';$('saveEvent').textContent=label;$('saveEventTop').textContent=$('bulkMode').checked?label:'保存';
+}
+function sameBulkEvent(a,b){return ['title','scope','start','end','notes','location','allDay','sync'].every(k=>(a[k]??'')===(b[k]??''));}
+async function saveBulkEvents(){
+ let drafts;try{drafts=MyLifeCore.allDayCopies({title:$('eventTitle').value.trim(),scope:sharedOnly()?'shared':$('eventScope').value,notes:$('eventNotes').value.trim(),location:$('eventLocation').value.trim(),sync:$('syncGoogle').checked},[...bulkDays]);
+ for(const draft of drafts){const job=bulkJobs.get(draft.start);if(job&&!sameBulkEvent(job.record,draft))throw Error('未確認の予定があるため、内容を変えずに再試行してください。別の内容は画面を閉じてから登録できます。');}
+ }catch(e){showMsg(e.message,true);return;}
+ setBusy(true);const fields=[...$('eventForm').querySelectorAll('input,textarea,select,button')].map(el=>[el,el.disabled]);for(const [el] of fields)el.disabled=true;
+ const failures=[];let saved=0;const total=drafts.length;
+ try{
+ // A previous response may have been lost after the server saved it. Re-read only that scope before retrying a stable ID.
+ const scopes=[...new Set(drafts.filter(d=>bulkJobs.has(d.start)).map(d=>d.scope))];const recovered=[];
+ if(state.mode==='cloud')for(const scope of scopes)recovered.push(...await sheetRead(scope==='shared'?config.sharedSheetId:config.privateSheetId,scope));
+ for(const draft of drafts){
+ $('bulkStatus').textContent=total+'日分を登録中…（'+saved+'日完了）';
+ const job=bulkJobs.get(draft.start)||{record:{...draft,id:crypto.randomUUID()}};bulkJobs.set(draft.start,job);
+ try{
+ if(state.mode==='demo'){
+ const items=parseJson(KEYS.demo,[]);if(!items.some(r=>r.id===job.record.id))items.push({...job.record,owner:'demo',calendarId:'',googleEventId:'',source:'manual',deleted:false,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});localStorage.setItem(KEYS.demo,JSON.stringify(items));
+ }else{
+ const existing=recovered.find(r=>r.id===job.record.id&&!r.deleted);
+ if(existing&&!sameBulkEvent(existing,job.record))throw Error('保存済みの予定が変更されています。予定を確認してください。');
+ const record=existing||(await gateway('save',draft.scope,job.record,0)).record;upsertLocal(record,draft.scope);
+ }
+ saved++;bulkDays.delete(draft.start);bulkJobs.delete(draft.start);
+ }catch(e){failures.push({date:draft.start,message:e.message});}
+ }
+ if(state.mode==='demo')loadDemo();renderBulkDates();
+ if(failures.length){$('bulkStatus').textContent=saved+'日を登録しました。未完了の'+failures.length+'日だけ選択したままです。再試行できます。';showMsg('未完了：'+failures.map(f=>f.date.slice(5).replace('-','/')+' '+f.message).join('／'),true);}
+ else{$('bulkStatus').textContent=saved+'日を登録しました。';$('eventDialog').close();}
+ }catch(e){$('bulkStatus').textContent='保存済みか確認できませんでした。日付を残しています。再試行してください。';showMsg(e.message,true);}
+ finally{for(const [el,disabled] of fields)el.disabled=disabled;setBusy(false);}
+}
 function buildFromForm(){const allDay=$('allDay').checked;const sd=$('startDate').value,ed=$('endDate').value;if(!sd||!ed)throw Error('開始日と終了日を入力してください。');let start,end;
  if(allDay){start=sd;end=keyAdd(ed,1);if(ed<sd)throw Error('終了日を開始日以降にしてください。');}
  else{start=makeLocalISO(sd,$('startTime').value);end=makeLocalISO(ed,$('endTime').value);if(new Date(end)<=new Date(start))throw Error('終了時刻は開始より後にしてください。');}
@@ -214,7 +260,7 @@ function targetCal(scope){return scope==='shared'?config.sharedCalId:config.priv
 function canonicalCal(id){return id==='primary'?(state.allCalendars.find(c=>c.primary)?.id||'primary'):id;}
 async function saveEvent(e){e.preventDefault();if(state.busy)return;
  // Showing cached data without a token: sign in from this tap, then save the same form.
- if(state.mode==='cloud'&&!isSignedIn()){connect(()=>saveEvent({preventDefault(){}}));return;}if(state.editing?.kind==='shift'){if(state.mode==='cloud')await saveShiftMemo();return;}let draft;try{draft=buildFromForm();if(!draft.title)throw Error('タイトルを入力してください。');}catch(err){showMsg(err.message,true);return;}
+ if(state.mode==='cloud'&&!isSignedIn()){connect(()=>saveEvent({preventDefault(){}}));return;}if(state.editing?.kind==='shift'){if(state.mode==='cloud')await saveShiftMemo();return;}if(!state.editing&&$('bulkMode').checked){await saveBulkEvents();return;}let draft;try{draft=buildFromForm();if(!draft.title)throw Error('タイトルを入力してください。');}catch(err){showMsg(err.message,true);return;}
  const old=state.editing;if(old?.kind==='shift'||(old?.origin==='google'&&!old._canEdit))return;setBusy(true);
  try{
  if(state.mode==='demo'){
@@ -274,6 +320,7 @@ const syncRunner=MyLifeSync.createRunner({
  onResult:report=>{const label={success:'成功',failed:'失敗',skipped:'未接続'};const shiftValue=report.results.shift.value,shiftLabel=report.results.shift.status==='skipped'?'対象外':label[report.results.shift.status]+(shiftValue&&report.results.shift.status==='success'?`（追加${shiftValue.created}・変更${shiftValue.updated}・削除${shiftValue.deleted}）`:'');const summary=(report.status==='success'?'同期完了':report.status==='partial'?'一部失敗':'同期失敗')+' · 勤務：'+shiftLabel;localStorage.setItem(KEYS.syncReport,JSON.stringify({at:report.at,status:report.status,summary}));renderSyncReport();$('syncStatus').textContent=summary;const detail=Object.values(report.results).filter(x=>x.status==='failed').map(x=>x.message).join('／');showMsg(summary+(detail?'：'+detail:''),report.status!=='success');if(report.status!=='success')noteError(summary+(detail?'：'+detail:''));refresh();}
 });
 function bind(){
+ $('bulkMode').addEventListener('change',bulkToggle);$('bulkMonth').addEventListener('change',renderBulkDates);$('eventDialog').addEventListener('cancel',e=>{if(state.busy)e.preventDefault();});
  $('shareApp').addEventListener('click',shareApp);
  $('resolveSync').addEventListener('click',resolveSync);
  // The token lives in RAM only, so an iPhone reload signs out; pressing sync then reconnects first and syncs right after.
@@ -298,3 +345,4 @@ async function autoRefresh(){if(document.visibilityState==='hidden')return;updat
 checkSharedChanges();updateWeather();
 document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='visible')autoRefresh();});setInterval(autoRefresh,5*60*1000);renderSyncReport();setTimeout(()=>scrollToDay(dateKey()),0);if(!config.clientId||!config.gatewayUrl)$('onboardingStatus').textContent='Google接続の初期設定は準備中です。体験モードは利用できます。設定完了後は、共有リンクとGoogleログインで開始できます。';if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 })();
+

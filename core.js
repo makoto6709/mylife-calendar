@@ -7,6 +7,15 @@ function timeLocal(value){if(!value||/^\d{4}-\d{2}-\d{2}$/.test(value))return ''
 function keyAdd(key,n){const d=new Date(key+'T12:00:00+09:00');d.setUTCDate(d.getUTCDate()+n);return dateKey(d);}
 function validDate(s){return /^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(+new Date(s+'T00:00:00+09:00'))&&dateKey(s+'T00:00:00+09:00')===s;}
 function makeLocalISO(date,time){if(!validDate(date)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))throw Error('日付または時刻が正しくありません。');return new Date(date+'T'+time+':00+09:00').toISOString();}
+/** Each chosen day is its own all-day event; gaps must never become a multi-day span. */
+function allDayCopies(draft,dates){
+ if(!String(draft.title||'').trim())throw Error('タイトルを入力してください。');
+ if(!['shared','private'].includes(draft.scope))throw Error('公開範囲を選択してください。');
+ const days=[...new Set(dates)].sort();
+ if(!days.length)throw Error('登録する日を選んでください。');
+ if(days.length>366||days.some(d=>!validDate(d)))throw Error('登録する日付を確認してください。');
+ return days.map(day=>({...draft,title:draft.title.trim(),start:day,end:keyAdd(day,1),allDay:true}));
+}
 function workTravel(title){return title.includes('水戸内原')?15:title.includes('東海')?45:title.includes('下妻')?90:null;}
 function alarmTimes(e){const travel=workTravel(e.title);if(travel===null||e.allDay)return null;const baseline=+new Date(e.start)-(travel+40)*60000;return [-10,-5,0].map(n=>timeLocal(baseline+n*60000));}
 /** 気象庁 茨城県 forecast (bosai/forecast/data/forecast/080000.json) → {'YYYY-MM-DD':{code,min,max,pop}}.
@@ -25,5 +34,6 @@ function parseJmaForecast(json,area='080010',station='40201'){
 /** JMA weather codes: the first digit is the main weather (1 晴れ, 2 くもり, 3 雨, 4 雪). */
 function weatherIcon(code){return {1:'☀️',2:'☁️',3:'☔',4:'⛄'}[String(code||'')[0]]||'';}
 function weatherLabel(code){return {1:'晴れ',2:'くもり',3:'雨',4:'雪'}[String(code||'')[0]]||'';}
-const api={dateKey,timeLocal,keyAdd,validDate,makeLocalISO,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel};root.MyLifeCore=api;if(typeof module!=='undefined')module.exports=api;
+const api={dateKey,timeLocal,keyAdd,validDate,makeLocalISO,allDayCopies,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel};root.MyLifeCore=api;if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
+
