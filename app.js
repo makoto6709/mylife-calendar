@@ -320,6 +320,7 @@ const syncRunner=MyLifeSync.createRunner({
  onResult:report=>{const label={success:'成功',failed:'失敗',skipped:'未接続'};const shiftValue=report.results.shift.value,shiftLabel=report.results.shift.status==='skipped'?'対象外':label[report.results.shift.status]+(shiftValue&&report.results.shift.status==='success'?`（追加${shiftValue.created}・変更${shiftValue.updated}・削除${shiftValue.deleted}）`:'');const summary=(report.status==='success'?'同期完了':report.status==='partial'?'一部失敗':'同期失敗')+' · 勤務：'+shiftLabel;localStorage.setItem(KEYS.syncReport,JSON.stringify({at:report.at,status:report.status,summary}));renderSyncReport();$('syncStatus').textContent=summary;const detail=Object.values(report.results).filter(x=>x.status==='failed').map(x=>x.message).join('／');showMsg(summary+(detail?'：'+detail:''),report.status!=='success');if(report.status!=='success')noteError(summary+(detail?'：'+detail:''));refresh();}
 });
 function bind(){
+ $('startDate').addEventListener('change',()=>{$('endDate').value=$('startDate').value;});
  $('bulkMode').addEventListener('change',bulkToggle);$('bulkMonth').addEventListener('change',renderBulkDates);$('eventDialog').addEventListener('cancel',e=>{if(state.busy)e.preventDefault();});
  $('shareApp').addEventListener('click',shareApp);
  $('resolveSync').addEventListener('click',resolveSync);
