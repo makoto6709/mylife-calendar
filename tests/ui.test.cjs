@@ -74,8 +74,8 @@ test('weather: one JMA request, marks on today and later days, details in the da
  let calls=0;const fetch=async url=>{if(String(url).includes('jma.go.jp')){calls++;return{ok:true,json:async()=>jma};}throw Error('offline');};
  const a=setup({fetch});for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));assert.equal(calls,1);
  const wx=key=>{const c=cells(a).find(c=>c.dataset.day===key);return (c?.children||[]).filter(x=>x.className==='wx').map(x=>x.textContent).join('');};
- assert.equal(wx(k(0)),'☀️');assert.equal(wx(k(1)),'☔');assert.equal(wx(k(2)),'☁️');assert.equal(wx(k(-1)),'','no mark on past days');
- cells(a).find(c=>c.dataset.day===k(2)).handlers.click();assert.match(a.elements.get('dayWeather').textContent,/☁️ くもり 18°／9°　降水40%/);
+ assert.equal(wx(k(0)),'☀️');assert.equal(wx(k(1)),'☔');assert.equal(wx(k(2)),'☁️');assert.equal(wx(k(-1)),'','no mark on past days');const temperature=cells(a).find(c=>c.dataset.day===k(2)).children.find(c=>c.className==='wxTemps');assert.equal(temperature['aria-label'],'最高18℃、最低9℃');assert.deepEqual(temperature.children.map(c=>c.textContent),['18°','/','9°']);assert.equal(cells(a).find(c=>c.dataset.day===k(0)).children.some(c=>c.className==='wxTemps'),false,'missing temperatures are not fabricated');
+ cells(a).find(c=>c.dataset.day===k(2)).handlers.click();assert.match(a.elements.get('dayWeather').textContent,/☁️ くもり　最高18℃　最低9℃　降水40%/);
  a.ticks[0]();for(let i=0;i<10;i++)await new Promise(r=>setImmediate(r));assert.equal(calls,1,'cached for 3 hours');assert.ok(JSON.parse(a.storage.get('mylife.calendar.weather.v1')).days[k(2)],'saved on the phone');});
 const pickBulkDay=(a,date)=>{a.elements.get('bulkMonth').value=date.slice(0,7);a.elements.get('bulkMonth').handlers.change();a.elements.get('bulkDates').children.find(b=>b.dataset.date===date).handlers.click();};
 test('bulk demo save creates one shared all-day holiday on each selected day, including another month',async()=>{
@@ -102,4 +102,8 @@ test('bulk shared-only save retains failed days and retries a lost response with
  assert.equal(a.elements.get('eventScope').value,'shared');assert.equal(a.elements.get('scopeField').classList.contains('hidden'),true);
  await a.elements.get('eventForm').handlers.submit({preventDefault(){}});assert.equal(db.length,2);assert.equal(a.elements.get('eventDialog').open,true);assert.equal(a.elements.get('saveEvent').textContent,'2日分を保存');assert.equal(a.elements.get('saveEventTop').disabled,false);assert.match(a.elements.get('bulkStatus').textContent,/未完了の2日/);
  await a.elements.get('eventForm').handlers.submit({preventDefault(){}});assert.equal(db.length,3);assert.equal(new Set(db.map(r=>r.id)).size,3);assert.equal(attempts.get('2026-11-05'),1,'saved but lost response is recovered by its ID');assert.equal(attempts.get('2026-11-07'),2);assert.ok(calls.filter(c=>c.action==='save').every(c=>c.scope==='shared'&&c.record.allDay));assert.equal(a.elements.get('eventDialog').open,false);
+});
+
+test('changing the start time sets a one-hour end and rolls the date over at midnight',()=>{
+ const a=setup();a.elements.get('navAdd').handlers.click();a.elements.get('startDate').value='2026-12-31';a.elements.get('endDate').value='2027-01-09';a.elements.get('startTime').value='23:30';a.elements.get('startTime').handlers.change();assert.equal(a.elements.get('endTime').value,'00:30');assert.equal(a.elements.get('endDate').value,'2027-01-01');a.elements.get('startTime').value='09:00';a.elements.get('startTime').handlers.change();assert.equal(a.elements.get('endTime').value,'10:00');assert.equal(a.elements.get('endDate').value,'2026-12-31');a.elements.get('endTime').value='12:00';assert.equal(a.elements.get('startTime').value,'09:00','end time stays independently editable');
 });

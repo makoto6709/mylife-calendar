@@ -16,6 +16,11 @@ function allDayCopies(draft,dates){
  if(days.length>366||days.some(d=>!validDate(d)))throw Error('登録する日付を確認してください。');
  return days.map(day=>({...draft,title:draft.title.trim(),start:day,end:keyAdd(day,1),allDay:true}));
 }
+function oneHourLater(date,time){
+ makeLocalISO(date,time);
+ const minutes=Number(time.slice(0,2))*60+Number(time.slice(3))+60;
+ return {date:keyAdd(date,minutes>=1440?1:0),time:pad(Math.floor(minutes/60)%24)+':'+pad(minutes%60)};
+}
 function workTravel(title){return title.includes('水戸内原')?15:title.includes('東海')?45:title.includes('下妻')?90:null;}
 function alarmTimes(e){const travel=workTravel(e.title);if(travel===null||e.allDay)return null;const baseline=+new Date(e.start)-(travel+40)*60000;return [-10,-5,0].map(n=>timeLocal(baseline+n*60000));}
 /** 気象庁 茨城県 forecast (bosai/forecast/data/forecast/080000.json) → {'YYYY-MM-DD':{code,min,max,pop}}.
@@ -34,6 +39,7 @@ function parseJmaForecast(json,area='080010',station='40201'){
 /** JMA weather codes: the first digit is the main weather (1 晴れ, 2 くもり, 3 雨, 4 雪). */
 function weatherIcon(code){return {1:'☀️',2:'☁️',3:'☔',4:'⛄'}[String(code||'')[0]]||'';}
 function weatherLabel(code){return {1:'晴れ',2:'くもり',3:'雨',4:'雪'}[String(code||'')[0]]||'';}
-const api={dateKey,timeLocal,keyAdd,validDate,makeLocalISO,allDayCopies,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel};root.MyLifeCore=api;if(typeof module!=='undefined')module.exports=api;
+const api={dateKey,timeLocal,keyAdd,validDate,makeLocalISO,allDayCopies,oneHourLater,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel};root.MyLifeCore=api;if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
+
 

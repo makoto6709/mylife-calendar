@@ -9,3 +9,7 @@ test('bulk all-day holidays are separate days across gaps and year boundaries',(
  assert.equal(rows.length,2);assert.equal(rows[0].start,'2026-12-31');assert.equal(rows[0].end,'2027-01-01');assert.equal(rows[1].start,'2027-01-02');assert.equal(rows[1].end,'2027-01-03');assert.ok(rows.every(r=>r.allDay&&r.title==='休日'&&r.scope==='shared'));
  assert.throws(()=>c.allDayCopies(draft,[]),/日を選んで/);assert.throws(()=>c.allDayCopies(draft,['2026-02-30']),/日付/);
 });
+
+test('one-hour duration follows JST dates through midnight and year end',()=>{
+ const c=require('../core.js');assert.deepEqual(c.oneHourLater('2026-12-31','23:30'),{date:'2027-01-01',time:'00:30'});assert.deepEqual(c.oneHourLater('2026-11-01','09:05'),{date:'2026-11-01',time:'10:05'});assert.throws(()=>c.oneHourLater('2026-11-01','24:00'),/日付または時刻/);
+});

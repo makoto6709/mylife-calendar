@@ -47,3 +47,6 @@ input.dimmed{opacity:.45}html{touch-action:manipulation;-webkit-text-size-adjust
 
 
 .bulkWeekdays,.bulkDatesGrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}.bulkWeekdays{text-align:center;font-size:.8rem;color:var(--muted);margin-bottom:6px}.bulkDatesGrid button{min-width:0;min-height:44px;padding:7px 0;background:#edf1f5;color:#172941;border:1px solid transparent;border-radius:9px}.bulkDatesGrid button.selected{background:#172941;color:white;border-color:#172941}.bulkDatesGrid button:focus-visible{outline:3px solid #678bb7;outline-offset:2px}#bulkSelection{overflow-wrap:anywhere}#bulkStatus:empty{display:none}
+
+
+.week.hasTemps{grid-template-rows:42px repeat(5,18px) 14px}.day .wxTemps{position:absolute;top:26px;left:1px;right:1px;display:flex;justify-content:center;gap:2px;font-size:11px;line-height:14px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}.wxHigh{color:#b64c43}.wxLow{color:#386eaf}.wxLegend{display:flex;justify-content:flex-end;gap:4px;font-size:10px;color:#78889b;padding:0 5px 4px}
