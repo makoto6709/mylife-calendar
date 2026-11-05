@@ -107,3 +107,89 @@ test('bulk shared-only save retains failed days and retries a lost response with
 test('changing the start time sets a one-hour end and rolls the date over at midnight',()=>{
  const a=setup();a.elements.get('navAdd').handlers.click();a.elements.get('startDate').value='2026-12-31';a.elements.get('endDate').value='2027-01-09';a.elements.get('startTime').value='23:30';a.elements.get('startTime').handlers.change();assert.equal(a.elements.get('endTime').value,'00:30');assert.equal(a.elements.get('endDate').value,'2027-01-01');a.elements.get('startTime').value='09:00';a.elements.get('startTime').handlers.change();assert.equal(a.elements.get('endTime').value,'10:00');assert.equal(a.elements.get('endDate').value,'2026-12-31');a.elements.get('endTime').value='12:00';assert.equal(a.elements.get('startTime').value,'09:00','end time stays independently editable');
 });
+
+function changeEventField(a,id,value,event='change'){
+ const field=a.elements.get(id);
+ field.value=value;
+ field.handlers[event]?.();
+}
+
+for(const {from,to,end} of [
+ {from:'2026-11-09',to:'2026-11-11',end:'2026-11-12'},
+ {from:'2026-12-01',to:'2026-11-30',end:'2026-12-01'},
+ {from:'2026-12-30',to:'2026-12-31',end:'2027-01-01'},
+]){
+ test(`changing a 23:30 event from ${from} to ${to} keeps its one-hour duration`,async()=>{
+  const a=setup();
+  a.elements.get('navAdd').handlers.click();
+  a.elements.get('eventTitle').value='夜の予定';
+  changeEventField(a,'startDate',from);
+  a.elements.get('startTime').handlers.focus();
+  changeEventField(a,'startTime','23:30');
+  assert.equal(a.elements.get('endDate').value,plusDays(from,1));
+  changeEventField(a,'startDate',to);
+  assert.equal(a.elements.get('endDate').value,end);
+  assert.equal(a.elements.get('endTime').value,'00:30');
+  await a.elements.get('eventForm').handlers.submit({preventDefault(){}});
+  const [saved]=JSON.parse(a.storage.get('mylife.calendar.demo.v1'));
+  assert.equal(saved.start,new Date(to+'T23:30:00+09:00').toISOString());
+  assert.equal(saved.end,new Date(end+'T00:30:00+09:00').toISOString());
+ });
+}
+
+test('moving an existing timed event keeps its date span and a manually edited end time',async()=>{
+ const a=setup();
+ const day=cells(a)[60].dataset.day;
+ await addDemo(a,{title:'既存の複数日予定',start:day,end:plusDays(day,2)});
+ const [original]=JSON.parse(a.storage.get('mylife.calendar.demo.v1'));
+ cells(a).find(c=>c.dataset.day===day).handlers.click();
+ a.elements.get('dayDialogEvents').children[0].children[1].handlers.click();
+
+ assert.equal(a.elements.get('endDate').value,plusDays(day,2));
+ assert.equal(a.elements.get('endTime').value,'11:00');
+ changeEventField(a,'endTime','08:15','input');
+ changeEventField(a,'startDate','');
+ changeEventField(a,'startDate',plusDays(day,3));
+ assert.equal(a.elements.get('startTime').value,'10:00');
+ assert.equal(a.elements.get('endDate').value,plusDays(day,5));
+ assert.equal(a.elements.get('endTime').value,'08:15');
+
+ await a.elements.get('eventForm').handlers.submit({preventDefault(){}});
+ const rows=JSON.parse(a.storage.get('mylife.calendar.demo.v1'));
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].id,original.id);
+ assert.equal(rows[0].end,new Date(plusDays(day,5)+'T08:15:00+09:00').toISOString());
+});
+
+test('moving a same-day event keeps its manually entered end time and rejects a reversed end time',async()=>{
+ const a=setup();
+ a.elements.get('navAdd').handlers.click();
+ a.elements.get('eventTitle').value='昼の予定';
+ a.elements.get('startTime').handlers.focus();
+ changeEventField(a,'startDate','2026-11-09');
+ changeEventField(a,'endTime','12:15','input');
+ changeEventField(a,'startDate','2026-11-10');
+ assert.equal(a.elements.get('endDate').value,'2026-11-10');
+ assert.equal(a.elements.get('endTime').value,'12:15');
+ changeEventField(a,'endTime','09:00','input');
+ await a.elements.get('eventForm').handlers.submit({preventDefault(){}});
+ assert.match(a.elements.get('message').textContent,/終了時刻は開始より後/);
+ assert.equal(a.storage.get('mylife.calendar.demo.v1'),undefined);
+});
+
+test('moving an all-day event keeps its selected days and saves an exclusive end date',async()=>{
+ const a=setup();
+ a.elements.get('navAdd').handlers.click();
+ a.elements.get('eventTitle').value='終日の予定';
+ changeEventField(a,'startDate','2026-11-09');
+ assert.equal(a.elements.get('endDate').value,'2026-11-09');
+ changeEventField(a,'endDate','2026-11-11');
+ changeEventField(a,'startDate','2026-12-30');
+ assert.equal(a.elements.get('allDay').checked,true);
+ assert.equal(a.elements.get('endDate').value,'2027-01-01');
+ await a.elements.get('eventForm').handlers.submit({preventDefault(){}});
+ const [saved]=JSON.parse(a.storage.get('mylife.calendar.demo.v1'));
+ assert.equal(saved.allDay,true);
+ assert.equal(saved.start,'2026-12-30');
+ assert.equal(saved.end,'2027-01-02');
+});

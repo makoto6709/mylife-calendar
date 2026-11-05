@@ -9,7 +9,7 @@ const TZ='Asia/Tokyo';
 const defaults={gatewayUrl:window.MYLIFE_DEPLOYMENT?.gatewayUrl||'',clientId:window.MYLIFE_DEPLOYMENT?.clientId||'',sharedSheetId:'',privateSheetId:'',sharedCalId:'',privateCalId:'',workCalId:'',visibleCalendarIds:[],visibleTouched:false,googleCalendarEnabled:true};
 const parseJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))||fallback;}catch{return fallback;}};
 let config={...defaults,...parseJson(KEYS.config,{})};for(const k of ['clientId','gatewayUrl'])if(window.MYLIFE_DEPLOYMENT?.[k])config[k]=window.MYLIFE_DEPLOYMENT[k];
-const {dateKey,keyAdd,makeLocalISO,timeLocal,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel}=MyLifeCore;
+const {dateKey,keyAdd,validDate,makeLocalISO,timeLocal,workTravel,alarmTimes,parseJmaForecast,weatherIcon,weatherLabel}=MyLifeCore;
 const today=new Date(dateKey()+'T12:00:00+09:00');const state={month:new Date(today.getFullYear(),today.getMonth(),1),selected:dateKey(today),filter:'private',token:'',email:'',mode:'demo',records:[],external:[],visible:[],allCalendars:[],fetchedCalIds:new Set(),busy:false,editing:null,expiresAt:0,weekStart:'',weekCount:78,index:new Map()};
 // The calendar is one continuous list of weeks starting on Monday; start three months back and extend on scroll.
 state.weekStart=(k=>keyAdd(k,-((new Date(k+'T12:00:00+09:00').getUTCDay()+6)%7)))(dateKey(new Date(today.getFullYear(),today.getMonth()-3,1)));
@@ -188,7 +188,26 @@ function allDayToggle(){const on=$('allDay').checked;$('startTime').classList.to
 function showSave(on){for(const id of ['saveEvent','saveEventTop'])$(id).classList.toggle('hidden',!on);}
 // Links in the memo: a textarea cannot open them, so list them as tappable links under it (http/https only).
 function renderNoteLinks(){const root=$('noteLinks');root.replaceChildren();const urls=[...new Set(($('eventNotes').value.match(/https?:\/\/[^\s<>"'「」（）]+/g)||[]).map(u=>u.replace(/[.,、。)!?]+$/,'')))].slice(0,5);for(const u of urls){const a=document.createElement('a');a.href=u;a.target='_blank';a.rel='noopener noreferrer';a.textContent=u;root.appendChild(a);}}
-function syncEndTime(){try{const end=MyLifeCore.oneHourLater($('startDate').value,$('startTime').value);$('endTime').value=end.time;$('endDate').value=end.date;}catch{}}
+let previousStartDate='';
+function syncEndTime(){
+ const startDate=$('startDate').value;
+ try{
+  const end=MyLifeCore.oneHourLater(startDate,$('startTime').value);
+  $('endTime').value=end.time;
+  $('endDate').value=end.date;
+  previousStartDate=startDate;
+ }catch{}
+}
+function shiftEndDate(){
+ const startDate=$('startDate').value,endDate=$('endDate').value;
+ if(!validDate(startDate))return;
+ // Move the whole date range by the same number of days, keeping both times intact.
+ if(validDate(previousStartDate)&&validDate(endDate)){
+  const days=(Date.parse(makeLocalISO(startDate,'00:00'))-Date.parse(makeLocalISO(previousStartDate,'00:00')))/86400000;
+  $('endDate').value=keyAdd(endDate,days);
+ }
+ previousStartDate=startDate;
+}
 function timeTouched(){if(!$('allDay').checked)return;$('allDay').checked=false;allDayToggle();}
 function scopeToggle(){$('scopeHelp').textContent=$('eventScope').value==='shared'?'共有予定は、2人が追加・編集・削除できます。':'非共有予定は本人専用Googleシートに保存され、相手には表示されません。';}
 function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError){$('resolveSync').classList.remove('hidden');$('editHint').classList.remove('hidden');$('editHint').textContent=e.lastError;}$('eventDialogTitle').textContent=e.kind==='shift'?'勤務シフト':e.origin==='google'?'Googleカレンダーの予定':'予定を編集';$('eventId').value=e.id;$('eventOrigin').value=e.origin;$('eventTitle').value=e.title;$('eventScope').value=e.scope==='private'?'private':'shared';$('startDate').value=inLocal(e.start);$('endDate').value=e.allDay?keyAdd(inLocal(e.end),-1):inLocal(e.end);$('startTime').value=timeLocal(e.start)||'10:00';$('endTime').value=timeLocal(e.end)||'11:00';$('allDay').checked=e.allDay;$('eventNotes').value=e.notes||'';$('eventLocation').value=e.location||'';$('syncGoogle').checked=!!e.sync;
@@ -203,6 +222,7 @@ function openEvent(e=null){clearEventForm();if(e){state.editing=e;if(e.lastError
  // Shared-only: new events are always 共有, the choice is hidden, and the private shift memo is not offered.
  $('bulkControls').classList.toggle('hidden',!!e);$('scopeField').classList.toggle('hidden',sharedOnly());if(sharedOnly()&&!e)$('eventScope').value='shared';
  if(e?.kind==='shift'&&state.mode==='cloud'&&!sharedOnly()){$('notesField').classList.remove('hidden');$('eventNotesLabel').textContent='自分だけのメモ';$('eventNotes').value=e._memo||'';$('eventNotes').disabled=false;showSave(true);if(!e.lastError)$('editHint').textContent='勤務は辻岡シフトから自動で取り込みます（編集不可）。メモは自分だけに表示され、相手やGoogleカレンダーには送られません。';}
+ previousStartDate=$('startDate').value;
  scopeToggle();renderNoteLinks();showDialog($('eventDialog'));}
 async function saveShiftMemo(){const e=state.editing;setBusy(true);
  try{const result=await gateway('saveShiftMemo','private',{id:e.id,notes:$('eventNotes').value.trim()},e._memoRev||0);$('eventDialog').close();upsertLocal(result.record,'private');showMsg('勤務メモを保存しました（自分だけに表示）。');}
@@ -322,7 +342,7 @@ const syncRunner=MyLifeSync.createRunner({
 });
 function bind(){
  for(const event of ['input','change'])$('startTime').addEventListener(event,syncEndTime);
- $('startDate').addEventListener('change',()=>{$('endDate').value=$('startDate').value;});
+ $('startDate').addEventListener('change',shiftEndDate);
  $('bulkMode').addEventListener('change',bulkToggle);$('bulkMonth').addEventListener('change',renderBulkDates);$('eventDialog').addEventListener('cancel',e=>{if(state.busy)e.preventDefault();});
  $('shareApp').addEventListener('click',shareApp);
  $('resolveSync').addEventListener('click',resolveSync);
