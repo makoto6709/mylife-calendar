@@ -53,3 +53,5 @@ input.dimmed{opacity:.45}html{touch-action:manipulation;-webkit-text-size-adjust
 
 /* Per-day reorder controls */
 .dayOrderRow{display:flex;gap:6px;align-items:stretch}.dayOrderRow .eventCard{flex:1;min-width:0}.dayOrderActions{display:flex;gap:4px}.dayOrderActions button{min-width:42px;padding:8px;font-size:20px}.dayOrderDone{align-self:flex-end;margin-bottom:6px}.eventCard{-webkit-touch-callout:none}
+
+.dayDragging{opacity:.25}.dayDragGhost{box-shadow:0 12px 30px #12284044;opacity:.96;border-radius:12px;transition:transform .06s ease;will-change:transform}.dayDragGhost .eventCard{transform:none!important}.eventCard{-webkit-touch-callout:none;user-select:none}
