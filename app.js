@@ -120,7 +120,19 @@ function inFilter(e){return state.filter==='shared'?e.scope==='shared':isMine(e)
 function dayKeysOf(e){let a,b;if(e.allDay){a=String(e.start).slice(0,10);b=keyAdd(String(e.end).slice(0,10),-1);}else{const s=new Date(e.start),t=new Date(e.end);if(!Number.isFinite(+s)||!Number.isFinite(+t))return [];a=dateKey(s);b=dateKey(new Date(Math.max(+s,+t-1)));}if(!a||b<a)b=a;const out=[];for(let k=a,i=0;k<=b&&i<370;k=keyAdd(k,1),i++)out.push(k);return out;}
 // One pass per render: day → events for the current 個人/共有 filter (rendering hundreds of days must not rescan every event per day).
 function buildIndex(){const idx=new Map();for(const e of state.visible){if(!inFilter(e))continue;e._days=dayKeysOf(e);for(const k of e._days){if(!idx.has(k))idx.set(k,[]);idx.get(k).push(e);}}for(const l of idx.values())l.sort((a,b)=>(b.scope==='shared')-(a.scope==='shared')||String(a.start).localeCompare(String(b.start)));state.index=idx;}
-function eventsForDay(day){return state.index.get(day)||[];}
+// Display order is local to this device, account, view and date; event contents never change.
+let reorderDay='';
+function orderStorageKey(day){return 'mylife.calendar.dayOrder.v1:'+encodeURIComponent(state.email||'demo')+':'+state.filter+':'+day;}
+function orderedDayEvents(day){const list=[...(state.index.get(day)||[])], ids=parseJson(orderStorageKey(day),[]);if(!Array.isArray(ids))return list;const rank=new Map(ids.map((id,i)=>[id,i]));return list.map((e,i)=>({e,i})).sort((a,b)=>(rank.get(a.e.id)??1e9)-(rank.get(b.e.id)??1e9)||a.i-b.i).map(x=>x.e);}
+function eventsForDay(day){return orderedDayEvents(day);}
+function moveDayEvent(day,id,delta){const list=eventsForDay(day),i=list.findIndex(e=>e.id===id),j=i+delta;if(i<0||j<0||j>=list.length)return;[list[i],list[j]]=[list[j],list[i]];try{localStorage.setItem(orderStorageKey(day),JSON.stringify(list.map(e=>e.id)));render();}catch{showMsg('並び順を保存できませんでした。',true);return;}openDay(day);}
+function enableLongPress(card,day){let timer=0,startX=0,startY=0,suppress=false;
+ card.addEventListener('pointerdown',ev=>{if(ev.button!==0)return;startX=ev.clientX;startY=ev.clientY;suppress=false;timer=setTimeout(()=>{timer=0;suppress=true;reorderDay=day;openDay(day);},550);});
+ card.addEventListener('pointermove',ev=>{if(Math.hypot(ev.clientX-startX,ev.clientY-startY)>9){clearTimeout(timer);timer=0;}});
+ for(const type of ['pointerup','pointercancel','pointerleave'])card.addEventListener(type,()=>{clearTimeout(timer);timer=0;});
+ card.addEventListener('contextmenu',ev=>ev.preventDefault());
+ return()=>suppress;
+}
 function eventCard(e,showDay,onOpen){const btn=document.createElement('button');btn.type='button';btn.className=`eventCard ${e.kind}${isPartner(e)?' partner':''}`;btn.innerHTML=`<span class="eventColor"></span><span class="eventContent"><strong>${safe(e.title)}</strong><small>${showDay?safe(e._shownDay)+' ':''}${safe(eventTime(e))}${e.syncState==='saving'?' · 保存中':''}${e.lastError?' · 要確認':''}${e._memo?' · メモあり':''}　·　${isPartner(e)?'相手の予定 · ':''}${safe(e.kind==='shift'?'勤務（編集不可）':e.kind==='shared'?'共有':e.kind==='private'?'個人':`Google · ${e._calendarName||''}`)}</small></span><span class="eventArrow">›</span>`;btn.addEventListener('click',()=>onOpen(e));return btn;}
 const dayLabel=key=>{const d=new Date(`${key}T12:00:00`);return `${d.getMonth()+1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`;};
 /** Tapping a date pops up that day's events (current 個人/共有 filter), with add and previous/next day. */
@@ -132,13 +144,14 @@ function swipeToDelete(row,card){const W=84;let x0=null,y0=0,dx=0,moved=false,sk
  const end=()=>{if(x0===null)return;x0=null;card.style.transition='';card.style.transform='';if(moved){row.classList.toggle('open',dx<-W/2);skipTap=true;}else if(row.classList.contains('open')){row.classList.remove('open');skipTap=true;}};
  card.addEventListener('pointerup',end);card.addEventListener('pointercancel',end);
  return()=>{const s=skipTap;skipTap=false;return s;};}
-function openDay(key){state.selected=key;markSelected();
- $('dayDialogTitle').textContent=dayLabel(key)+'の予定';$('dayWeather').textContent=weatherText(key);const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key);
- if(!list.length)root.innerHTML='<div class="empty">この日の予定はありません。</div>';else for(const e of list){let swiped=()=>false;const card=eventCard(e,false,x=>{if(swiped())return;$('dayDialog').close();openEvent(x);});
+function openDay(key){if(reorderDay&&reorderDay!==key)reorderDay='';state.selected=key;markSelected();
+ $('dayDialogTitle').textContent=dayLabel(key)+'の予定';$('dayWeather').textContent=weatherText(key);const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key),reordering=reorderDay===key;
+ if(reordering){const done=document.createElement('button');done.type='button';done.className='secondary dayOrderDone';done.textContent='並べ替え完了';done.addEventListener('click',()=>{reorderDay='';openDay(key);});root.appendChild(done);}
+ if(!list.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='この日の予定はありません。';root.appendChild(empty);}else for(const [i,e] of list.entries()){let swiped=()=>false,held=()=>false;const card=eventCard(e,false,x=>{if(reordering||held()||swiped())return;$('dayDialog').close();openEvent(x);});held=enableLongPress(card,key);
+  if(reordering){const row=document.createElement('div');row.className='dayOrderRow';const actions=document.createElement('div');actions.className='dayOrderActions';for(const [label,delta] of [['↑',-1],['↓',1]]){const btn=document.createElement('button');btn.type='button';btn.className='secondary';btn.textContent=label;btn.setAttribute('aria-label',e.title+'を'+(delta<0?'上':'下')+'へ移動');btn.disabled=(delta<0?i===0:i===list.length-1);btn.addEventListener('click',()=>moveDayEvent(key,e.id,delta));actions.appendChild(btn);}row.append(card,actions);root.appendChild(row);continue;}
   if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){root.appendChild(card);continue;}
   const row=document.createElement('div');row.className='swipeRow';const del=document.createElement('button');del.type='button';del.className='swipeDelete';del.textContent='削除';
   swiped=swipeToDelete(row,card);
-  // The swipe is the confirmation: one tap on 削除 deletes, and the list redraws at once.
   del.addEventListener('click',()=>{state.editing=e;const done=removeEvent(null,true);openDay(key);done.then(()=>{if($('dayDialog').open)openDay(key);});});
   row.append(del,card);root.appendChild(row);}
  showDialog($('dayDialog'));}
@@ -162,6 +175,8 @@ function renderWeek(ws,todayKey){const row=document.createElement('div');row.cla
  const seen=new Set(),evs=[];for(const k of days)for(const e of eventsForDay(k))if(!seen.has(e)){seen.add(e);evs.push(e);}
  const span=e=>{const c=e._days.map(k=>days.indexOf(k)).filter(i=>i>=0);return [Math.min(...c),Math.max(...c)];};
  evs.sort((a,b)=>{const[as,ae]=span(a),[bs,be]=span(b);return (b.scope==='shared')-(a.scope==='shared')||(be-bs)-(ae-as)||as-bs||String(a.start).localeCompare(String(b.start));});/* 共有 first, then longer bars */
+ // Keep multi-day bars in their original lanes; apply the day's order to its single-day events.
+ for(const day of days){const slots=[];evs.forEach((e,i)=>{if(e._days.length===1&&e._days[0]===day)slots.push(i);});const ordered=eventsForDay(day).filter(e=>e._days.length===1),set=new Set(slots.map(i=>evs[i])),filtered=ordered.filter(e=>set.has(e));if(filtered.length===slots.length)slots.forEach((slot,i)=>{evs[slot]=filtered[i];});}
  const lanes=Array.from({length:LANES},()=>Array(7).fill(false)),hidden=Array(7).fill(0);
  for(const e of evs){const[s,t]=span(e);let lane=-1;for(let l=0;l<LANES&&lane<0;l++){let free=true;for(let c=s;c<=t;c++)if(lanes[l][c])free=false;if(free)lane=l;}
   if(lane<0){for(let c=s;c<=t;c++)hidden[c]++;continue;}for(let c=s;c<=t;c++)lanes[lane][c]=true;
@@ -353,7 +368,7 @@ function bind(){
  $('todayBtn').addEventListener('click',()=>{state.selected=dateKey(new Date());markSelected();scrollToDay(state.selected);});
  // Bottom menu: one button toggles 個人 ⇄ 共有.
  $('navScope').addEventListener('click',()=>{state.filter=state.filter==='shared'?'private':'shared';render();});
- $('closeDay').addEventListener('click',()=>$('dayDialog').close());$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
+ $('closeDay').addEventListener('click',()=>{reorderDay='';$('dayDialog').close();});$('dayDialog').addEventListener('close',()=>{reorderDay='';});$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
  $('navAdd').addEventListener('click',()=>openEvent());
  window.addEventListener?.('scroll',onScroll,{passive:true});window.addEventListener?.('resize',updateMonthTitle);
  $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);for(const id of ['startTime','endTime'])for(const ev of ['focus','click','input'])$(id).addEventListener(ev,timeTouched);$('eventScope').addEventListener('change',scopeToggle);$('eventNotes').addEventListener('input',renderNoteLinks);
