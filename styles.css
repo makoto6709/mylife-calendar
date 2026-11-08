@@ -50,3 +50,6 @@ input.dimmed{opacity:.45}html{touch-action:manipulation;-webkit-text-size-adjust
 
 
 .week.hasTemps{grid-template-rows:42px repeat(5,18px) 14px}.day .wxTemps{position:absolute;top:26px;left:1px;right:1px;display:flex;justify-content:center;gap:2px;font-size:11px;line-height:14px;white-space:nowrap;pointer-events:none;font-variant-numeric:tabular-nums}.wxHigh{color:#b64c43}.wxLow{color:#386eaf}.wxLegend{display:flex;justify-content:flex-end;gap:4px;font-size:10px;color:#78889b;padding:0 5px 4px}
+
+/* Per-day reorder controls */
+.dayOrderRow{display:flex;gap:6px;align-items:stretch}.dayOrderRow .eventCard{flex:1;min-width:0}.dayOrderActions{display:flex;gap:4px}.dayOrderActions button{min-width:42px;padding:8px;font-size:20px}.dayOrderDone{align-self:flex-end;margin-bottom:6px}.eventCard{-webkit-touch-callout:none}
