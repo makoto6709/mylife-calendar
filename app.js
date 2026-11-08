@@ -121,17 +121,50 @@ function dayKeysOf(e){let a,b;if(e.allDay){a=String(e.start).slice(0,10);b=keyAd
 // One pass per render: day → events for the current 個人/共有 filter (rendering hundreds of days must not rescan every event per day).
 function buildIndex(){const idx=new Map();for(const e of state.visible){if(!inFilter(e))continue;e._days=dayKeysOf(e);for(const k of e._days){if(!idx.has(k))idx.set(k,[]);idx.get(k).push(e);}}for(const l of idx.values())l.sort((a,b)=>(b.scope==='shared')-(a.scope==='shared')||String(a.start).localeCompare(String(b.start)));state.index=idx;}
 // Display order is local to this device, account, view and date; event contents never change.
-let reorderDay='';
 function orderStorageKey(day){return 'mylife.calendar.dayOrder.v1:'+encodeURIComponent(state.email||'demo')+':'+state.filter+':'+day;}
 function orderedDayEvents(day){const list=[...(state.index.get(day)||[])], ids=parseJson(orderStorageKey(day),[]);if(!Array.isArray(ids))return list;const rank=new Map(ids.map((id,i)=>[id,i]));return list.map((e,i)=>({e,i})).sort((a,b)=>(rank.get(a.e.id)??1e9)-(rank.get(b.e.id)??1e9)||a.i-b.i).map(x=>x.e);}
 function eventsForDay(day){return orderedDayEvents(day);}
-function moveDayEvent(day,id,delta){const list=eventsForDay(day),i=list.findIndex(e=>e.id===id),j=i+delta;if(i<0||j<0||j>=list.length)return;[list[i],list[j]]=[list[j],list[i]];try{localStorage.setItem(orderStorageKey(day),JSON.stringify(list.map(e=>e.id)));render();}catch{showMsg('並び順を保存できませんでした。',true);return;}openDay(day);}
-function enableLongPress(card,day){let timer=0,startX=0,startY=0,suppress=false;
- card.addEventListener('pointerdown',ev=>{if(ev.button!==0)return;startX=ev.clientX;startY=ev.clientY;suppress=false;timer=setTimeout(()=>{timer=0;suppress=true;reorderDay=day;openDay(day);},550);});
- card.addEventListener('pointermove',ev=>{if(Math.hypot(ev.clientX-startX,ev.clientY-startY)>9){clearTimeout(timer);timer=0;}});
- for(const type of ['pointerup','pointercancel','pointerleave'])card.addEventListener(type,()=>{clearTimeout(timer);timer=0;});
+let activeDayDrag=null;
+function enableDayDrag(card,row,day,id){
+ let timer=0,startX=0,startY=0,drag=null,suppress=false,mouse=false;
+ function clear(){if(timer)clearTimeout(timer);timer=0;}
+ function begin(x,y){
+  const root=$('dayDialogEvents');if(!row.isConnected||root.children.length<2)return;
+  const rect=row.getBoundingClientRect(),ghost=row.cloneNode(true);
+  ghost.classList.remove('open');ghost.classList.add('dayDragGhost');
+  Object.assign(ghost.style,{position:'fixed',left:rect.left+'px',top:rect.top+'px',width:rect.width+'px',height:rect.height+'px',margin:'0',pointerEvents:'none',zIndex:'10000'});
+  document.body.appendChild(ghost);row.classList.remove('open');row.classList.add('dayDragging');
+  drag={root,ghost,top:rect.top,originY:y};activeDayDrag=drag;suppress=true;
+  if(navigator.vibrate)navigator.vibrate(12);
+ }
+ function start(x,y){clear();startX=x;startY=y;suppress=false;timer=setTimeout(()=>{timer=0;begin(x,y);},500);}
+ function move(x,y,ev){
+  if(!drag){if(Math.hypot(x-startX,y-startY)>8)clear();return;}
+  if(ev.cancelable)ev.preventDefault();
+  drag.ghost.style.transform='translateY('+(y-drag.originY)+'px) scale(1.02)';
+  const rows=[...drag.root.children].filter(n=>n!==row&&n.dataset?.orderId);
+  const before=rows.find(n=>{const b=n.getBoundingClientRect();return y<b.top+b.height/2;});
+  drag.root.insertBefore(row,before||null);
+  const scroll=$('dayDialog').querySelector('.dialogBody');
+  if(scroll){const rect=scroll.getBoundingClientRect();if(y<rect.top+35)scroll.scrollTop-=12;else if(y>rect.bottom-35)scroll.scrollTop+=12;}
+ }
+ function finish(cancelled){
+  clear();if(!drag)return;
+  const current=drag;drag=null;activeDayDrag=null;current.ghost.remove();row.classList.remove('dayDragging');
+  if(!cancelled){const ids=[...current.root.children].map(n=>n.dataset?.orderId).filter(Boolean);try{localStorage.setItem(orderStorageKey(day),JSON.stringify(ids));render();}catch{showMsg('並び順を保存できませんでした。',true);}}
+  openDay(day);
+ }
+ card.addEventListener('touchstart',ev=>{if(ev.touches.length!==1)return;mouse=false;const t=ev.touches[0];start(t.clientX,t.clientY);},{passive:true});
+ card.addEventListener('touchmove',ev=>{const t=ev.touches[0];if(t)move(t.clientX,t.clientY,ev);},{passive:false});
+ card.addEventListener('touchend',()=>finish(false));
+ card.addEventListener('touchcancel',()=>finish(true));
+ row.addEventListener('pointerdown',ev=>{if(ev.pointerType==='touch'||ev.button!==0)return;mouse=true;start(ev.clientX,ev.clientY);});
+ row.addEventListener('pointermove',ev=>{if(mouse)move(ev.clientX,ev.clientY,ev);});
+ row.addEventListener('pointerup',()=>{if(mouse)finish(false);mouse=false;});
+ row.addEventListener('pointercancel',()=>{if(mouse)finish(true);mouse=false;});
+ row.addEventListener('pointerleave',()=>{if(!drag)clear();});
  card.addEventListener('contextmenu',ev=>ev.preventDefault());
- return()=>suppress;
+ return()=>{const s=suppress;suppress=false;return s;};
 }
 function eventCard(e,showDay,onOpen){const btn=document.createElement('button');btn.type='button';btn.className=`eventCard ${e.kind}${isPartner(e)?' partner':''}`;btn.innerHTML=`<span class="eventColor"></span><span class="eventContent"><strong>${safe(e.title)}</strong><small>${showDay?safe(e._shownDay)+' ':''}${safe(eventTime(e))}${e.syncState==='saving'?' · 保存中':''}${e.lastError?' · 要確認':''}${e._memo?' · メモあり':''}　·　${isPartner(e)?'相手の予定 · ':''}${safe(e.kind==='shift'?'勤務（編集不可）':e.kind==='shared'?'共有':e.kind==='private'?'個人':`Google · ${e._calendarName||''}`)}</small></span><span class="eventArrow">›</span>`;btn.addEventListener('click',()=>onOpen(e));return btn;}
 const dayLabel=key=>{const d=new Date(`${key}T12:00:00`);return `${d.getMonth()+1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`;};
@@ -140,20 +173,20 @@ function markSelected(){for(const row of $('calendarGrid').children)for(const c 
 /** Drag a day-popup card left to uncover its 削除 button. Returns a check the card's tap uses: a swipe, or a tap that only closes an open row, does not open the event. */
 function swipeToDelete(row,card){const W=84;let x0=null,y0=0,dx=0,moved=false,skipTap=false;
  card.addEventListener('pointerdown',ev=>{x0=ev.clientX;y0=ev.clientY;dx=row.classList.contains('open')?-W:0;moved=false;card.style.transition='none';});
- card.addEventListener('pointermove',ev=>{if(x0===null)return;const mx=ev.clientX-x0,my=ev.clientY-y0;if(!moved){if(Math.abs(mx)<8&&Math.abs(my)<8)return;if(Math.abs(my)>Math.abs(mx)){x0=null;card.style.transition='';return;}moved=true;}dx=Math.min(0,Math.max(-W,(row.classList.contains('open')?-W:0)+mx));card.style.transform=`translateX(${dx}px)`;});
- const end=()=>{if(x0===null)return;x0=null;card.style.transition='';card.style.transform='';if(moved){row.classList.toggle('open',dx<-W/2);skipTap=true;}else if(row.classList.contains('open')){row.classList.remove('open');skipTap=true;}};
+ card.addEventListener('pointermove',ev=>{if(activeDayDrag){x0=null;return;}if(x0===null)return;const mx=ev.clientX-x0,my=ev.clientY-y0;if(!moved){if(Math.abs(mx)<8&&Math.abs(my)<8)return;if(Math.abs(my)>Math.abs(mx)){x0=null;card.style.transition='';return;}moved=true;}dx=Math.min(0,Math.max(-W,(row.classList.contains('open')?-W:0)+mx));card.style.transform=`translateX(${dx}px)`;});
+ const end=()=>{if(activeDayDrag){x0=null;return;}if(x0===null)return;x0=null;card.style.transition='';card.style.transform='';if(moved){row.classList.toggle('open',dx<-W/2);skipTap=true;}else if(row.classList.contains('open')){row.classList.remove('open');skipTap=true;}};
  card.addEventListener('pointerup',end);card.addEventListener('pointercancel',end);
  return()=>{const s=skipTap;skipTap=false;return s;};}
-function openDay(key){if(reorderDay&&reorderDay!==key)reorderDay='';state.selected=key;markSelected();
- $('dayDialogTitle').textContent=dayLabel(key)+'の予定';$('dayWeather').textContent=weatherText(key);const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key),reordering=reorderDay===key;
- if(reordering){const done=document.createElement('button');done.type='button';done.className='secondary dayOrderDone';done.textContent='並べ替え完了';done.addEventListener('click',()=>{reorderDay='';openDay(key);});root.appendChild(done);}
- if(!list.length){root.innerHTML='<div class="empty">この日の予定はありません。</div>';}else for(const [i,e] of list.entries()){let swiped=()=>false,held=()=>false;const card=eventCard(e,false,x=>{if(reordering||held()||swiped())return;$('dayDialog').close();openEvent(x);});held=enableLongPress(card,key);
-  if(reordering){const row=document.createElement('div');row.className='dayOrderRow';const actions=document.createElement('div');actions.className='dayOrderActions';for(const [label,delta] of [['↑',-1],['↓',1]]){const btn=document.createElement('button');btn.type='button';btn.className='secondary';btn.textContent=label;btn.setAttribute('aria-label',e.title+'を'+(delta<0?'上':'下')+'へ移動');btn.disabled=(delta<0?i===0:i===list.length-1);btn.addEventListener('click',()=>moveDayEvent(key,e.id,delta));actions.appendChild(btn);}row.append(card,actions);root.appendChild(row);continue;}
-  if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){root.appendChild(card);continue;}
-  const row=document.createElement('div');row.className='swipeRow';const del=document.createElement('button');del.type='button';del.className='swipeDelete';del.textContent='削除';
-  swiped=swipeToDelete(row,card);
-  del.addEventListener('click',()=>{state.editing=e;const done=removeEvent(null,true);openDay(key);done.then(()=>{if($('dayDialog').open)openDay(key);});});
-  row.append(del,card);root.appendChild(row);}
+function openDay(key){state.selected=key;markSelected();
+ $('dayDialogTitle').textContent=dayLabel(key)+'の予定';$('dayWeather').textContent=weatherText(key);const root=$('dayDialogEvents');root.replaceChildren();const list=eventsForDay(key);
+ if(!list.length){root.innerHTML='<div class="empty">この日の予定はありません。</div>';}else for(const e of list){let swiped=()=>false,held=()=>false;const card=eventCard(e,false,x=>{if(held()||swiped())return;$('dayDialog').close();openEvent(x);});let row;
+  if(e.kind==='shift'||(e.origin==='google'&&!e._canEdit)){row=card;}
+  else{row=document.createElement('div');row.className='swipeRow';const del=document.createElement('button');del.type='button';del.className='swipeDelete';del.textContent='削除';
+   swiped=swipeToDelete(row,card);
+   del.addEventListener('click',()=>{state.editing=e;const done=removeEvent(null,true);openDay(key);done.then(()=>{if($('dayDialog').open)openDay(key);});});
+   row.append(del,card);}
+  row.dataset.orderId=e.id;root.appendChild(row);held=enableDayDrag(card,row,key,e.id);
+ }
  showDialog($('dayDialog'));}
 function eventTime(e){return e.allDay?'終日':`${timeLocal(e.start)}〜${timeLocal(e.end)}`;}
 const LANES=5;
@@ -368,7 +401,7 @@ function bind(){
  $('todayBtn').addEventListener('click',()=>{state.selected=dateKey(new Date());markSelected();scrollToDay(state.selected);});
  // Bottom menu: one button toggles 個人 ⇄ 共有.
  $('navScope').addEventListener('click',()=>{state.filter=state.filter==='shared'?'private':'shared';render();});
- $('closeDay').addEventListener('click',()=>{reorderDay='';$('dayDialog').close();});$('dayDialog').addEventListener('close',()=>{reorderDay='';});$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
+ $('closeDay').addEventListener('click',()=>$('dayDialog').close());$('dayAdd').addEventListener('click',()=>{$('dayDialog').close();openEvent();});$('dayPrev').addEventListener('click',()=>openDay(keyAdd(state.selected,-1)));$('dayNext').addEventListener('click',()=>openDay(keyAdd(state.selected,1)));
  $('navAdd').addEventListener('click',()=>openEvent());
  window.addEventListener?.('scroll',onScroll,{passive:true});window.addEventListener?.('resize',updateMonthTitle);
  $('eventForm').addEventListener('submit',saveEvent);$('cancelEvent').addEventListener('click',()=>$('eventDialog').close());$('closeEvent').addEventListener('click',()=>$('eventDialog').close());$('deleteEvent').addEventListener('click',removeEvent);$('allDay').addEventListener('change',allDayToggle);for(const id of ['startTime','endTime'])for(const ev of ['focus','click','input'])$(id).addEventListener(ev,timeTouched);$('eventScope').addEventListener('change',scopeToggle);$('eventNotes').addEventListener('input',renderNoteLinks);
