@@ -62,7 +62,7 @@ async function loadCloud(){ensureCloud();saveConfig();if(!config.sharedSheetId||
 async function fetchSharedStamp(){if(!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(config.gatewayUrl))return null;const res=await fetch(config.gatewayUrl,{redirect:'follow',signal:AbortSignal.timeout(20000)});if(!res.ok)return null;const d=await res.json();return typeof d.sharedStamp==='string'?d.sharedStamp:null;}
 function markSeen(stamp){if(stamp===null||stamp===undefined)return;try{localStorage.setItem(KEYS.sharedStamp,stamp);}catch{}$('updateBanner').classList.add('hidden');}
 async function checkSharedChanges(){if(state.mode!=='cloud'||isSignedIn())return;try{const stamp=await fetchSharedStamp();if(stamp&&stamp!==localStorage.getItem(KEYS.sharedStamp))$('updateBanner').classList.remove('hidden');}catch{}}
-async function updateNow(){if(state.busy)return;const banner=$('updateBanner');banner.classList.add('hidden');if(isSignedIn()){if(!await refresh())banner.classList.remove('hidden');return;}connect(async()=>{if(!await refresh())banner.classList.remove('hidden');});}
+async function updateNow(){if(state.busy)return;const banner=$('updateBanner');banner.classList.add('hidden');if(isSignedIn()){if(!await refresh())banner.classList.remove('hidden');return;}connect(()=>{});}
 async function syncGoogleCalendars(){
  ensureCloud();await loadCalendarList();
  const scopes=await Promise.allSettled(['shared','private'].map(reconcileScope));
@@ -410,6 +410,9 @@ function bind(){
 bind();syncInputs();showLastError();if(!loadCached())loadDemo();
 // A still-valid saved sign-in refreshes the calendar right away, without any tap.
 if(restoreAuth())(async()=>{try{await bootstrap();saveAuth();await refresh();}catch(e){noteError(`自動更新に失敗：${e.message}`);}})();
+// If the saved Google access token has expired, attempt a no-account-chooser renewal on user interaction.
+// Google OAuth tokens cannot be extended to 90 days by the PWA; Google may still require consent.
+else {const previous=parseJson(KEYS.auth,null);if(previous?.email){state.email=previous.email;syncInputs();}}
 // While signed in, pick up the partner's changes without pressing anything: on returning to the app and every 5 minutes while it is open.
 // Kept light: each check is one tiny GET for the change stamp; the sheets are read and the calendar redrawn only when it moved.
 async function autoRefresh(){if(document.visibilityState==='hidden')return;updateWeather();if(!(isSignedIn()&&state.protocol===3))return checkSharedChanges();try{const stamp=await fetchSharedStamp();if(stamp===null||stamp!==localStorage.getItem(KEYS.sharedStamp))refresh();}catch{refresh();}}
