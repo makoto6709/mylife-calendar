@@ -62,7 +62,7 @@ async function loadCloud(){ensureCloud();saveConfig();if(!config.sharedSheetId||
 async function fetchSharedStamp(){if(!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(config.gatewayUrl))return null;const res=await fetch(config.gatewayUrl,{redirect:'follow',signal:AbortSignal.timeout(20000)});if(!res.ok)return null;const d=await res.json();return typeof d.sharedStamp==='string'?d.sharedStamp:null;}
 function markSeen(stamp){if(stamp===null||stamp===undefined)return;try{localStorage.setItem(KEYS.sharedStamp,stamp);}catch{}$('updateBanner').classList.add('hidden');}
 async function checkSharedChanges(){if(state.mode!=='cloud'||isSignedIn())return;try{const stamp=await fetchSharedStamp();if(stamp&&stamp!==localStorage.getItem(KEYS.sharedStamp))$('updateBanner').classList.remove('hidden');}catch{}}
-function updateNow(){$('updateBanner').classList.add('hidden');connect();}
+async function updateNow(){if(state.busy)return;const banner=$('updateBanner');banner.classList.add('hidden');if(isSignedIn()){if(!await refresh())banner.classList.remove('hidden');return;}connect(async()=>{if(!await refresh())banner.classList.remove('hidden');});}
 async function syncGoogleCalendars(){
  ensureCloud();await loadCalendarList();
  const scopes=await Promise.allSettled(['shared','private'].map(reconcileScope));
